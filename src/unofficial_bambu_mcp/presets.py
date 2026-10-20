@@ -241,3 +241,35 @@ def _fid_index():
 
 def line_for_filament_id(fid):
     return _fid_index().get(fid)
+
+
+def write_user_filament(name, base, values):
+    """Save a new Bambu Studio user filament preset `name` inheriting from the system preset `base`, with `values`
+    (key -> single value). Never overwrites: returns the path, or raises if a preset with that name exists.
+    Bambu Studio loads it at the next start."""
+    if source("filament", base) == "user":
+        base = raw("filament", base).get("inherits") or base
+    if source("filament", base) != "system":
+        raise PresetError(f"'{base}' is not a system filament preset")
+    if exists("filament", name):
+        raise PresetError(f"a filament preset named '{name}' already exists: choose another name")
+    folder = studio.user_dir("filament")
+    if not folder:
+        raise PresetError("Bambu Studio user preset folder not found (sign in to Bambu Studio once)")
+    fl = flat("filament", base)
+    out = {"filament_settings_id": [name], "from": "User", "inherits": base, "name": name}
+    if "filament_extruder_variant" in fl:
+        out["filament_extruder_variant"] = fl["filament_extruder_variant"]
+    for k, v in values.items():
+        cur = fl.get(k)
+        out[k] = [str(v)] * len(cur) if isinstance(cur, list) and cur else ([str(v)] if isinstance(cur, list) else str(v))
+    ver = studio.version() or "02.08.00.00"
+    out["version"] = ".".join(str(int(x)) for x in ver.split("."))
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, name.replace("/", "-") + ".json")
+    if os.path.exists(path):
+        raise PresetError(f"{path} already exists")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(dict(sorted(out.items())), f, indent=4)
+    refresh()
+    return path

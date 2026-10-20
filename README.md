@@ -26,6 +26,8 @@ You talk, it does the slicer work:
 | Slicing | Uses the Bambu Studio command line: time, grams per filament, filament changes, layers and warnings for every plate. |
 | Previews | Images of a plate (iso or top, zoom on the objects, painted colors shown) and of any **sliced layer**, so the assistant can check its own work. |
 | Test prints | Generate a plate with the first N mm of a model to check bed adhesion before a long print. |
+| Calibration | **Temperature tower** (temperature engraved on each block), **flow rate test** (per-object flow, percentage engraved on top, pass 1 and pass 2) and **pressure advance tower** (K changes every millimeter), for any filament, Bambu or not. Save the result as a **Bambu Studio user preset**. |
+| Layer actions | **Pause** at a height (magnets, nuts), **filament change** at a height (AMS), or any G-code at a height. Kept when you open and save Bambu Studio projects. |
 | Printing *(experimental)* | `send_to_printer` exports a plate as `.gcode.3mf` and opens it in **Bambu Connect** (official URL scheme) or **Bambu Studio**, where you check the AMS mapping and press Print. Nothing starts by itself, and the printer stays in cloud mode, so Bambu Handy keeps working. |
 | Printer status *(experimental)* | `printer_status` reads state, progress, remaining time, temperatures, AMS trays and errors on the local network, read-only. `use_ams_filaments` sets the project slots from what is loaded in the AMS. It uses the LAN access code Bambu Studio already saved, and finds the printer by itself. |
 
@@ -98,7 +100,6 @@ installation and flattened the way the app does, because the command line does n
 
 ## Roadmap
 
-- Calibration prints (temperature tower, flow rate) and custom G-code at a height (pause, color change)
 - A live bridge inside the slicer, to be proposed to OrcaSlicer and Bambu Studio
 
 ## Contributing and support

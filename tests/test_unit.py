@@ -100,3 +100,41 @@ def test_preset_for_tray():
     m = presets.machine_name("P1S")
     assert printer.preset_for_tray("GFL03", "PLA", m).startswith("eSUN PLA+")
     assert printer.preset_for_tray(None, "PETG", m) == "Generic PETG"
+
+
+def test_snap_to_layer():
+    from unofficial_bambu_mcp.calibration import snap
+    assert snap(0.05, 0.2, 0.2) == 0.2
+    assert snap(2.0, 0.2, 0.2) == 2.0
+    assert snap(2.05, 0.2, 0.2) == 2.2
+
+
+def test_calibration_solids_are_closed():
+    from unofficial_bambu_mcp import calibration
+    try:
+        geometry.default_font()
+    except FileNotFoundError:
+        pytest.skip("no system font")
+    tower, actions = calibration.temperature_tower([230, 225, 220])
+    info = geometry.check(tower.parts[0].verts, tower.parts[0].tris)
+    assert info["manifold"] and info["pieces"] == 1
+    assert [a.gcode.split()[1] for a in actions] == ["S230", "S225", "S220"]
+    pa, steps = calibration.pa_tower([0.0, 0.01, 0.02])
+    assert geometry.check(pa.parts[0].verts, pa.parts[0].tris)["manifold"] and len(steps) == 3
+    blocks = calibration.flow_blocks([-5, 0, 5])
+    assert [o.settings["print_flow_ratio"] for o, _ in blocks] == ["0.95", "1", "1.05"]
+
+
+@needs_bambu
+def test_layer_actions_roundtrip(tmp_path):
+    from unofficial_bambu_mcp import threemf
+    from unofficial_bambu_mcp.project import LayerGcode, Obj, Part, Project
+    pr = Project("t", "P1S", filaments=[("Bambu PLA Basic", "#000000"), ("Bambu PLA Basic", "#FFFFFF")])
+    v, t = geometry.box(20, 20, 10)
+    pr.plates[0].objects.append(Obj("Box", [Part("Box", v, t, 1)], at=(100, 100)))
+    pr.plates[0].layer_gcodes = [LayerGcode(2.0, "pause", message="magnets"), LayerGcode(4.0, "tool_change", filament=2),
+                                 LayerGcode(6.0, "custom", gcode="M104 S210")]
+    back = threemf.read(threemf.write(pr, str(tmp_path / "t.3mf")))
+    got = [g.as_dict() for g in back.plates[0].layer_gcodes]
+    assert got == [{"z": 2.0, "kind": "pause", "message": "magnets"}, {"z": 4.0, "kind": "tool_change", "filament": 2},
+                   {"z": 6.0, "kind": "custom", "gcode": "M104 S210"}]

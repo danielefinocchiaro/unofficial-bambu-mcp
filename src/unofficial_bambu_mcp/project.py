@@ -62,9 +62,33 @@ class Obj:
         return sorted({p.filament for p in self.parts})
 
 
+# custom G-code at a height (Bambu Studio CustomGCode::Type)
+GCODE_TYPES = {"color_change": 0, "pause": 1, "tool_change": 2, "template": 3, "custom": 4}
+
+
+class LayerGcode:
+    """Something to do when the print reaches `z` (mm): pause, filament change or custom G-code."""
+
+    def __init__(self, z, kind="custom", gcode="", filament=1, color="", message=""):
+        if kind not in GCODE_TYPES:
+            raise ValueError(f"kind must be one of {sorted(GCODE_TYPES)}")
+        self.z, self.kind, self.gcode, self.filament, self.color, self.message = float(z), kind, gcode, int(filament), color, message
+
+    def as_dict(self):
+        d = {"z": round(self.z, 3), "kind": self.kind}
+        if self.kind == "custom":
+            d["gcode"] = self.gcode
+        if self.kind in ("color_change", "tool_change"):
+            d["filament"] = self.filament
+        if self.message:
+            d["message"] = self.message
+        return d
+
+
 class Plate:
     def __init__(self, name, objects=None, settings=None):
         self.name, self.objects, self.settings = name, objects or [], settings or {}
+        self.layer_gcodes = []          # [LayerGcode], kept sorted by z
 
 
 class Project:
@@ -319,7 +343,10 @@ class Project:
                 if any(p.tri_attrs.get("paint_color") for p in o.parts):
                     entry["painted_colors"] = True
                 objs.append(entry)
-            out["plates"].append({"plate": pi + 1, "name": pl.name, "objects": objs})
+            entry = {"plate": pi + 1, "name": pl.name, "objects": objs}
+            if pl.layer_gcodes:
+                entry["layer_gcodes"] = [g.as_dict() for g in pl.layer_gcodes]
+            out["plates"].append(entry)
         return out
 
 

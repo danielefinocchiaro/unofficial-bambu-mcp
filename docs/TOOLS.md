@@ -1,6 +1,6 @@
 # Tools
 
-34 tools, generated from the server code by `scripts/gen_tools_doc.py`.
+40 tools, generated from the server code by `scripts/gen_tools_doc.py`.
 
 ## `bambu_status`
 
@@ -349,3 +349,79 @@ ams_slots: pick trays explicitly, e.g. [1, 3] -> project slot 1 = AMS slot 1, pr
 | Parameter | Type | Default |
 |---|---|---|
 | `ams_slots` | array / null | `None` |
+
+## `add_layer_action`
+
+Do something when the print reaches height z (mm), before that layer is printed:
+action = pause (e.g. to insert magnets or nuts; message is shown in Bambu Studio),
+filament_change (switch to filament slot `filament` from that height on, with the AMS),
+gcode (any G-code line(s), e.g. 'M104 S210'). z is snapped to the nearest real layer at or above it.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `plate` | integer | required |
+| `z` | number | required |
+| `action` | string | required |
+| `filament` | integer | `0` |
+| `gcode` | string | `''` |
+| `message` | string | `''` |
+
+## `remove_layer_action`
+
+Remove a layer action (1-based index as listed by get_project), or all of them with index 0.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `plate` | integer | required |
+| `index` | integer | `0` |
+
+## `make_temperature_tower`
+
+Add a plate with a temperature tower for a filament slot: one 8 mm block per temperature (hottest at the
+bottom), each with a bridge and its temperature engraved on the front. Defaults: the filament's
+temperature +15 down to -25 °C, within its allowed range. Pick the block with the best bridge, surface and
+least stringing.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `filament` | integer | `1` |
+| `start` | number | `0` |
+| `end` | number | `0` |
+| `step` | number | `5` |
+
+## `make_flow_test`
+
+Add a plate of flow-rate squares for a filament slot, each printed with a different flow modifier (percent)
+engraved on top. Pass 1: -20..+20 step 5. Pass 2: around the best one, e.g. low=-4 high=4 step=1.
+Pick the square with the smoothest top surface (no gaps, no ridges).
+
+| Parameter | Type | Default |
+|---|---|---|
+| `filament` | integer | `1` |
+| `low` | number | `-20` |
+| `high` | number | `20` |
+| `step` | number | `5` |
+
+## `make_pa_tower`
+
+Add a plate with a pressure advance (flow dynamics) tower: a thin square tube printed fast, the K value grows
+by `step` every millimeter. Find the height with the sharpest corners and no gaps: K = start + floor(height) * step.
+When sending it, turn off the printer's automatic flow dynamics calibration.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `filament` | integer | `1` |
+| `start` | number | `0.0` |
+| `end` | number | `0.06` |
+| `step` | number | `0.004` |
+
+## `save_filament_preset`
+
+Save the filament of a slot, with this project's changes for that slot (temperatures, flow ratio, plate
+temperatures...), as a new Bambu Studio user preset. It appears in Bambu Studio after a restart and can be
+picked for an AMS slot. Never overwrites an existing preset.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `slot` | integer | required |
+| `name` | string | required |

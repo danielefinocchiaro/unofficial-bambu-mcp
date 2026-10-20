@@ -14,7 +14,7 @@ from xml.sax.saxutils import escape, quoteattr
 import numpy as np
 
 from . import presets
-from .project import Obj, Part, Plate, Project
+from .project import GCODE_TYPES, LayerGcode, Obj, Part, Plate, Project
 
 CORE = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
 PROD = "http://schemas.microsoft.com/3dmanufacturing/production/2015/06"
@@ -23,7 +23,8 @@ NS = (f'xmlns="{CORE}" xmlns:BambuStudio="http://schemas.bambulab.com/package/20
 HEAD = '<?xml version="1.0" encoding="UTF-8"?>\n'
 TRI_ATTRS = ("paint_color", "paint_supports", "paint_seam", "face_property")
 # extra files we can carry over unchanged when plates are not renumbered
-PASSTHROUGH = ("Metadata/custom_gcode_per_layer.xml",)
+PASSTHROUGH = ()
+LAYER_GCODE_FILE = "Metadata/custom_gcode_per_layer.xml"
 
 
 def plate_stride(bed_w):
@@ -146,9 +147,53 @@ def write(project, path, title=None):
         z.writestr("Metadata/slice_info.config", HEAD + "<config>\n  <header>\n"
                    '    <header_item key="X-BBL-Client-Type" value="slicer"/>\n'
                    '    <header_item key="X-BBL-Client-Version" value="02.07.01.57"/>\n  </header>\n</config>\n')
+        xml = _layer_gcodes_xml(project)
+        if xml:
+            z.writestr(LAYER_GCODE_FILE, xml)
         for name, data in project.extras.items():
             z.writestr(name, data)
     return path
+
+
+def _layer_gcodes_xml(project):
+    """Metadata/custom_gcode_per_layer.xml in Bambu Studio's format (see bbs_3mf.cpp)."""
+    plates = [(i, pl) for i, pl in enumerate(project.plates) if pl.layer_gcodes]
+    if not plates:
+        return None
+    pause = project.config().get("machine_pause_gcode", "M400 U1")
+    out = ['<?xml version="1.0" encoding="utf-8"?>', "<custom_gcodes_per_layer>"]
+    for i, pl in plates:
+        out += ["<plate>", f'<plate_info id="{i + 1}"/>']
+        for g in sorted(pl.layer_gcodes, key=lambda g: g.z):
+            typ = GCODE_TYPES[g.kind]
+            extra = g.gcode if g.kind == "custom" else (g.message if g.kind == "pause" else "")
+            gcode = {"pause": pause, "tool_change": "tool_change", "template": ""}.get(g.kind, extra)
+            out.append(f'<layer top_z="{g.z:g}" type="{typ}" extruder="{g.filament}" color={quoteattr(g.color or "")} '
+                       f'extra={quoteattr(extra)} gcode={quoteattr(gcode)}/>')
+        used = {f for o in pl.objects for f in o.filaments()}
+        mode = "SingleExtruder" if len(project.filaments) == 1 else ("MultiAsSingle" if len(used) <= 1 else "MultiExtruder")
+        out += [f'<mode value="{mode}"/>', "</plate>"]
+    out.append("</custom_gcodes_per_layer>")
+    return "\n".join(out) + "\n"
+
+
+def _read_layer_gcodes(xml_bytes):
+    """{plate_index (0-based): [LayerGcode]} from custom_gcode_per_layer.xml."""
+    kinds = {v: k for k, v in GCODE_TYPES.items()}
+    out = {}
+    root = ET.fromstring(xml_bytes)
+    for pl in root.findall("plate"):
+        info = pl.find("plate_info")
+        idx = int(info.get("id")) - 1 if info is not None else 0
+        for ly in pl.findall("layer"):
+            typ = int(ly.get("type", "4"))
+            kind = kinds.get(typ, "custom")
+            extra = ly.get("extra", "")
+            out.setdefault(idx, []).append(LayerGcode(
+                float(ly.get("top_z", "0")), kind, gcode=extra if kind == "custom" else "",
+                filament=int(ly.get("extruder", "1") or 1), color=ly.get("color", ""),
+                message=extra if kind == "pause" else ""))
+    return out
 
 
 # ================================================================ READ
@@ -224,6 +269,7 @@ def read(path):
 
         ms = ET.fromstring(z.read("Metadata/model_settings.config")) if "Metadata/model_settings.config" in names else None
         extras = {n: z.read(n) for n in PASSTHROUGH if n in names}
+        layer_gcodes = _read_layer_gcodes(z.read(LAYER_GCODE_FILE)) if LAYER_GCODE_FILE in names else {}
         for n in ("Metadata/layer_heights_profile.txt", "Metadata/layer_config_ranges.xml"):
             if n in names:
                 warnings.append(f"{n.split('/')[-1]} (variable layer height / height ranges) is not carried over")
@@ -345,6 +391,9 @@ def read(path):
         proj.plates = [Plate("Plate 1")]
     if any(p.tri_attrs.get("paint_color") for _, o in proj.objects() for p in o.parts):
         warnings.append("painted colors are kept")
+    for idx, items in layer_gcodes.items():
+        if idx < len(proj.plates):
+            proj.plates[idx].layer_gcodes = sorted(items, key=lambda g: g.z)
     proj.extras = extras
     proj.warnings = warnings
     proj.source_path = path

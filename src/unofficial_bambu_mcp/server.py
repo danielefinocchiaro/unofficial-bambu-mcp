@@ -6,8 +6,8 @@ import os
 
 from mcp.server.mcpserver import Image, MCPServer
 
-from . import geometry, presets, preview, printer, slicer, studio, threemf
-from .project import Obj, Part, Plate, Project, next_free_path
+from . import calibration, geometry, presets, preview, printer, slicer, studio, threemf
+from .project import LayerGcode, Obj, Part, Plate, Project, next_free_path
 
 INSTRUCTIONS = """Work on Bambu Studio projects (.3mf) for Bambu Lab printers. Typical flow:
 new_project or open_project -> import_model / add_shape -> move/arrange -> set_filament / set_setting ->
@@ -624,6 +624,159 @@ def use_ams_filaments(ams_slots: list[int] | None = None) -> dict:
     if missing:
         res["warning"] = f"objects use slots {missing} that no longer exist: reassign them with set_object_filament"
     return res
+
+
+# ---------------------------------------------------------------- layer actions and calibration
+def _layers(pr):
+    cfg = pr.config()
+    lh = float(cfg.get("layer_height", "0.2"))
+    fh = float(cfg.get("initial_layer_print_height", lh))
+    return lh, fh
+
+
+@mcp.tool()
+def add_layer_action(plate: int, z: float, action: str, filament: int = 0, gcode: str = "", message: str = "") -> dict:
+    """Do something when the print reaches height z (mm), before that layer is printed:
+    action = pause (e.g. to insert magnets or nuts; message is shown in Bambu Studio),
+    filament_change (switch to filament slot `filament` from that height on, with the AMS),
+    gcode (any G-code line(s), e.g. 'M104 S210'). z is snapped to the nearest real layer at or above it."""
+    pr = P()
+    pl = pr.plate(plate)
+    lh, fh = _layers(pr)
+    zz = calibration.snap(z, lh, fh)
+    if action == "pause":
+        item = LayerGcode(zz, "pause", message=message)
+    elif action == "filament_change":
+        if not 1 <= filament <= len(pr.filaments):
+            raise ValueError(f"filament must be a slot 1..{len(pr.filaments)}")
+        item = LayerGcode(zz, "tool_change", filament=filament, color=pr.filaments[filament - 1][1])
+    elif action == "gcode":
+        if not gcode.strip():
+            raise ValueError("gcode is empty")
+        item = LayerGcode(zz, "custom", gcode=gcode)
+    else:
+        raise ValueError("action must be pause, filament_change or gcode")
+    pl.layer_gcodes = sorted(pl.layer_gcodes + [item], key=lambda g: g.z)
+    return {"plate": plate, "z_requested": z, "z": zz, "layer_actions": [g.as_dict() for g in pl.layer_gcodes]}
+
+
+@mcp.tool()
+def remove_layer_action(plate: int, index: int = 0) -> dict:
+    """Remove a layer action (1-based index as listed by get_project), or all of them with index 0."""
+    pl = P().plate(plate)
+    if index == 0:
+        pl.layer_gcodes = []
+    else:
+        if not 1 <= index <= len(pl.layer_gcodes):
+            raise ValueError(f"index must be 1..{len(pl.layer_gcodes)}")
+        pl.layer_gcodes.pop(index - 1)
+    return {"plate": plate, "layer_actions": [g.as_dict() for g in pl.layer_gcodes]}
+
+
+def _calib_plate(pr, name, objs, positions=None):
+    pl = Plate(name)
+    pr.plates.append(pl)
+    bw, bd = pr.info["bed"]
+    for i, o in enumerate(objs):
+        dx, dy = positions[i] if positions else (0.0, 0.0)
+        o.at = (bw / 2 + dx, bd / 2 + dy)
+        o.name = pr.unique_name(o.name)
+        pl.objects.append(o)
+    return len(pr.plates), pl
+
+
+@mcp.tool()
+def make_temperature_tower(filament: int = 1, start: float = 0, end: float = 0, step: float = 5) -> dict:
+    """Add a plate with a temperature tower for a filament slot: one 8 mm block per temperature (hottest at the
+    bottom), each with a bridge and its temperature engraved on the front. Defaults: the filament's
+    temperature +15 down to -25 °C, within its allowed range. Pick the block with the best bridge, surface and
+    least stringing."""
+    pr = P()
+    if not 1 <= filament <= len(pr.filaments):
+        raise ValueError(f"filament must be a slot 1..{len(pr.filaments)}")
+    fl = presets.flat("filament", pr.filaments[filament - 1][0])
+    nominal = float((fl.get("nozzle_temperature") or ["220"])[0])
+    r_hi = float((fl.get("nozzle_temperature_range_high") or ["240"])[0])
+    r_lo = float((fl.get("nozzle_temperature_range_low") or ["190"])[0])
+    hi = start or min(r_hi, nominal + 15)           # default: 9 blocks around the preset temperature
+    lo = end or max(r_lo, nominal - 25)
+    if hi < lo:
+        hi, lo = lo, hi
+    temps = list(reversed(calibration.frange(lo, hi, abs(step) or 5)))[:12]
+    lh, fh = _layers(pr)
+    ob, actions = calibration.temperature_tower(temps, lh, fh, filament)
+    n, pl = _calib_plate(pr, f"Temperature tower {temps[0]:g}-{temps[-1]:g}", [ob])
+    pl.layer_gcodes = actions
+    return {"plate": n, "filament": pr.filaments[filament - 1][0], "temperatures_bottom_to_top": temps,
+            "block_height_mm": 8, "how_to_read": "each block is printed at the temperature engraved on it",
+            "next": f"slice_project(plate={n}) and send it; then set nozzle_temperature for this filament"}
+
+
+@mcp.tool()
+def make_flow_test(filament: int = 1, low: float = -20, high: float = 20, step: float = 5) -> dict:
+    """Add a plate of flow-rate squares for a filament slot, each printed with a different flow modifier (percent)
+    engraved on top. Pass 1: -20..+20 step 5. Pass 2: around the best one, e.g. low=-4 high=4 step=1.
+    Pick the square with the smoothest top surface (no gaps, no ridges)."""
+    pr = P()
+    if not 1 <= filament <= len(pr.filaments):
+        raise ValueError(f"filament must be a slot 1..{len(pr.filaments)}")
+    mods = calibration.frange(low, high, abs(step) or 5)[:16]
+    blocks = calibration.flow_blocks(mods, filament)
+    objs = [b[0] for b in blocks]
+    cols = 3 if len(objs) <= 9 else 4
+    n, pl = _calib_plate(pr, f"Flow test {low:+g}..{high:+g}%", objs, calibration.grid(objs, cols))
+    base = float((presets.flat("filament", pr.filaments[filament - 1][0]).get("filament_flow_ratio") or ["1"])[0])
+    cur = pr.overrides.get("filament_flow_ratio")
+    if isinstance(cur, list) and len(cur) >= filament:
+        base = float(cur[filament - 1])
+    return {"plate": n, "filament": pr.filaments[filament - 1][0], "current_flow_ratio": base,
+            "squares": [{"modifier_percent": m, "resulting_flow_ratio": round(base * r, 4)}
+                        for m, (_, r) in zip(mods, blocks, strict=True)],
+            "next": f"slice_project(plate={n}), print, pick the best square; then "
+                    f"set_setting('filament_flow_ratio', <resulting value>, slot={filament}) or save_filament_preset"}
+
+
+@mcp.tool()
+def make_pa_tower(filament: int = 1, start: float = 0.0, end: float = 0.06, step: float = 0.004) -> dict:
+    """Add a plate with a pressure advance (flow dynamics) tower: a thin square tube printed fast, the K value grows
+    by `step` every millimeter. Find the height with the sharpest corners and no gaps: K = start + floor(height) * step.
+    When sending it, turn off the printer's automatic flow dynamics calibration."""
+    pr = P()
+    if not 1 <= filament <= len(pr.filaments):
+        raise ValueError(f"filament must be a slot 1..{len(pr.filaments)}")
+    values = calibration.frange(start, end, step)[:60]
+    lh, fh = _layers(pr)
+    ob, actions = calibration.pa_tower(values, lh, fh, filament)
+    n, pl = _calib_plate(pr, f"PA tower K {values[0]:g}-{values[-1]:g}", [ob])
+    pl.layer_gcodes = actions
+    return {"plate": n, "filament": pr.filaments[filament - 1][0], "height_mm": len(values),
+            "k_by_height": {f"{i}-{i + 1} mm": k for i, k in enumerate(values)},
+            "next": f"slice_project(plate={n}); in the send dialog untick 'Flow Dynamics Calibration'"}
+
+
+@mcp.tool()
+def save_filament_preset(slot: int, name: str) -> dict:
+    """Save the filament of a slot, with this project's changes for that slot (temperatures, flow ratio, plate
+    temperatures...), as a new Bambu Studio user preset. It appears in Bambu Studio after a restart and can be
+    picked for an AMS slot. Never overwrites an existing preset."""
+    pr = P()
+    if not 1 <= slot <= len(pr.filaments):
+        raise ValueError(f"slot must be 1..{len(pr.filaments)}")
+    preset = pr.filaments[slot - 1][0]
+    values = {}
+    if presets.source("filament", preset) == "user":
+        own = presets.raw("filament", preset)
+        values.update({k: (v[0] if isinstance(v, list) and v else v) for k, v in own.items() if k not in presets.META
+                       and k != "filament_extruder_variant"})
+    fkeys = set(presets.settings("filament", preset))
+    for k, v in pr.overrides.items():
+        if k in fkeys:
+            values[k] = v[slot - 1] if isinstance(v, list) and len(v) >= slot else v
+    if not values:
+        raise ValueError("this slot has no changes to save: use set_setting(..., slot=N) first")
+    path = presets.write_user_filament(name, preset, values)
+    return {"saved": path, "inherits": preset, "values": values,
+            "note": "restart Bambu Studio to see it, then pick it for the AMS slot"}
 
 
 def main():
