@@ -1,0 +1,38 @@
+[project]
+name = "unofficial-bambu-mcp"
+version = "0.1.0"
+description = "Unofficial MCP server to build, edit, slice and preview Bambu Studio projects (.3mf) from an AI assistant."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Daniele Finocchiaro" }]
+keywords = ["mcp", "bambu lab", "bambu studio", "3d printing", "3mf", "slicer", "claude"]
+dependencies = [
+    "mcp>=2.0",
+    "numpy>=1.24",
+    "pillow>=10",
+    "shapely>=2.0",
+    "manifold3d>=2.4",
+    "fonttools>=4.40",
+]
+
+[project.scripts]
+unofficial-bambu-mcp = "unofficial_bambu_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/unofficial_bambu_mcp"]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.ruff]
+line-length = 140
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B"]
+ignore = ["B008"]
