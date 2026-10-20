@@ -219,3 +219,25 @@ def filament_colors(preset):
         if out:
             break
     return out
+
+
+@lru_cache(maxsize=1)
+def _fid_index():
+    """Bambu filament id (e.g. GFA00) -> filament line name ("Bambu PLA Basic"), from the presets that declare it."""
+    idx = {}
+    for (k, n), (p, src) in _index().items():
+        if k != "filament" or src != "system":
+            continue
+        try:
+            with open(p, encoding="utf-8") as f:
+                d = json.load(f)
+        except (OSError, ValueError):
+            continue
+        fid = d.get("filament_id")
+        if fid and fid not in idx:
+            idx[fid] = n.split(" @")[0].strip()
+    return idx
+
+
+def line_for_filament_id(fid):
+    return _fid_index().get(fid)

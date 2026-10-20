@@ -13,3 +13,5 @@ First version, tested on macOS with Bambu Studio 2.8 and a P1S / A1 mini setup.
 - Slicing through the Bambu Studio CLI: time, grams per filament, filament changes, layers, warnings.
 - Previews: plate (iso/top, zoom) and sliced layers.
 - First-layer test plate generator.
+- Experimental: `send_to_printer` (plate exported as .gcode.3mf and opened in Bambu Connect or Bambu Studio),
+  `printer_status` and `use_ams_filaments` (read-only status over the local network).

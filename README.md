@@ -26,6 +26,8 @@ You talk, it does the slicer work:
 | Slicing | Uses the Bambu Studio command line: time, grams per filament, filament changes, layers and warnings for every plate. |
 | Previews | Images of a plate (iso or top, zoom on the objects, painted colors shown) and of any **sliced layer**, so the assistant can check its own work. |
 | Test prints | Generate a plate with the first N mm of a model to check bed adhesion before a long print. |
+| Printing *(experimental)* | `send_to_printer` exports a plate as `.gcode.3mf` and opens it in **Bambu Connect** (official URL scheme) or **Bambu Studio**, where you check the AMS mapping and press Print. Nothing starts by itself, and the printer stays in cloud mode, so Bambu Handy keeps working. |
+| Printer status *(experimental)* | `printer_status` reads state, progress, remaining time, temperatures, AMS trays and errors on the local network, read-only. `use_ams_filaments` sets the project slots from what is loaded in the AMS. It uses the LAN access code Bambu Studio already saved, and finds the printer by itself. |
 
 The full list of tools with their parameters is in [docs/TOOLS.md](docs/TOOLS.md).
 
@@ -78,8 +80,13 @@ installation and flattened the way the app does, because the command line does n
 - **Safe with your files.** Nothing is ever overwritten: saving adds `-2`, `-3`... if a file exists, and opened
   projects are read as a copy.
 - **Light.** numpy, shapely, manifold3d, fonttools and Pillow. No Bambu profile is shipped with this repository.
+- **Your printer, your call.** No print, motion or setting command is ever sent to the printer. Status is read with
+  the access code Bambu Studio stores locally; the code is read when needed and never copied anywhere.
 
 ## Status and limitations
+
+- **Experimental on this branch:** printing hand-off and printer status are written against Bambu's documented
+  behavior but not yet tested on a real printer.
 
 - Tested on macOS with Bambu Studio 2.8, on projects made from scratch and on real MakerWorld downloads
   (multi-plate, painted 6-color models, A1 mini projects).
@@ -91,9 +98,6 @@ installation and flattened the way the app does, because the command line does n
 
 ## Roadmap
 
-- Sending a plate to the printer through the official apps (Bambu Studio / Bambu Connect), printer kept in cloud
-  mode — in progress
-- Read-only printer status and AMS sync on the local network — in progress
 - Calibration prints (temperature tower, flow rate) and custom G-code at a height (pause, color change)
 - A live bridge inside the slicer, to be proposed to OrcaSlicer and Bambu Studio
 

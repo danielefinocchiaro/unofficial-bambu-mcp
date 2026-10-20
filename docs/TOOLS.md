@@ -1,6 +1,6 @@
 # Tools
 
-31 tools, generated from the server code by `scripts/gen_tools_doc.py`.
+34 tools, generated from the server code by `scripts/gen_tools_doc.py`.
 
 ## `bambu_status`
 
@@ -321,3 +321,31 @@ slice_project(plate=<new plate>).
 | `plate` | integer | `1` |
 | `height` | number | `0.8` |
 | `objects` | array / null | `None` |
+
+## `send_to_printer`
+
+Prepare the print file of one plate (.gcode.3mf) and hand it to an official Bambu app, where the user
+checks printer and AMS mapping and presses Print/Send. Nothing starts printing by itself.
+via: auto (Bambu Connect if installed, otherwise Bambu Studio) | bambu_connect | bambu_studio | file (only export).
+Tell the user what to press, and the time, weight and filaments of the plate.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `plate` | integer | `1` |
+| `via` | string | `'auto'` |
+
+## `printer_status`
+
+Read-only status of the printer on the local network: state, job, progress, remaining time, layer,
+temperatures, AMS trays (type, color, remaining %), active slot, errors. Works with the printer in normal
+cloud mode (Bambu Handy keeps working). Nothing is sent to the printer except a status request.
+
+## `use_ams_filaments`
+
+Set the project's filament slots from what is loaded in the AMS right now (preset and color), like
+Bambu Studio's 'sync AMS'. Default: every loaded tray in order (project slot 1 = first loaded tray).
+ams_slots: pick trays explicitly, e.g. [1, 3] -> project slot 1 = AMS slot 1, project slot 2 = AMS slot 3.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `ams_slots` | array / null | `None` |

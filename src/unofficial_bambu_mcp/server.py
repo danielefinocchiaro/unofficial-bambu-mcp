@@ -6,16 +6,17 @@ import os
 
 from mcp.server.mcpserver import Image, MCPServer
 
-from . import geometry, presets, preview, slicer, studio, threemf
+from . import geometry, presets, preview, printer, slicer, studio, threemf
 from .project import Obj, Part, Plate, Project, next_free_path
 
 INSTRUCTIONS = """Work on Bambu Studio projects (.3mf) for Bambu Lab printers. Typical flow:
 new_project or open_project -> import_model / add_shape -> move/arrange -> set_filament / set_setting ->
-preview_plate (look at it) -> save_project -> slice_project -> preview_layer -> open_in_bambu_studio.
+preview_plate (look at it) -> save_project -> slice_project -> preview_layer -> send_to_printer.
 Coordinates are millimeters on the plate, origin at the front-left corner, objects are placed by the center
 of their footprint and always sit on the bed. Plates and filament slots are numbered from 1.
 Files are never overwritten: saving picks a new name if the file exists. Opened files are read as a copy.
-Always look at preview_plate after changing the layout, and report slicing warnings to the user."""
+Always look at preview_plate after changing the layout, and report slicing warnings to the user.
+send_to_printer never starts a print: it opens an official Bambu app where the user presses Print/Send."""
 
 mcp = MCPServer("unofficial-bambu-mcp", instructions=INSTRUCTIONS, version="0.1.0")
 
@@ -63,7 +64,7 @@ def bambu_status() -> dict:
     return {
         "bambu_studio": studio.executable(), "version": studio.version(), "running": studio.is_running(),
         "data_dir": studio.data_dir(), "profile_roots": studio.profile_roots(),
-        "user_presets": studio.user_dir(), "output_dir": out_dir(),
+        "user_presets": studio.user_dir(), "output_dir": out_dir(), "bambu_connect": studio.bambu_connect(),
         "project": P().name if S.project else None, "last_saved": S.saved, "last_sliced": S.sliced,
     }
 
@@ -541,6 +542,88 @@ def make_first_layer_test(plate: int = 1, height: float = 0.8, objects: list[str
         test.objects.append(c)
     return {"plate": len(pr.plates), "objects": [o.name for o in test.objects],
             "note": "painted colors are not kept in the test copy"}
+
+
+@mcp.tool()
+def send_to_printer(plate: int = 1, via: str = "auto") -> dict:
+    """Prepare the print file of one plate (.gcode.3mf) and hand it to an official Bambu app, where the user
+    checks printer and AMS mapping and presses Print/Send. Nothing starts printing by itself.
+    via: auto (Bambu Connect if installed, otherwise Bambu Studio) | bambu_connect | bambu_studio | file (only export).
+    Tell the user what to press, and the time, weight and filaments of the plate."""
+    pr = P()
+    pl = pr.plate(plate)
+    if not pl.objects:
+        raise ValueError(f"plate {plate} is empty")
+    tmp = next_free_path(os.path.join(out_dir(), f".{pr.name}-export.3mf"))
+    threemf.write(pr, tmp)
+    out = next_free_path(os.path.join(out_dir(), f"{pr.name}-plate{plate}.gcode.3mf"))
+    try:
+        st = slicer.export_plate(tmp, plate, out)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    used = sorted({f for o in pl.objects for f in o.filaments()})
+    res = {"print_file": out, "plate": plate, "printer": pr.machine, "minutes": st.get("minutes"),
+           "grams": st.get("grams"), "warnings": st.get("warnings", []),
+           "filaments": [{"slot": k, "preset": pr.filaments[k - 1][0], "color": pr.filaments[k - 1][1]}
+                         for k in used if k <= len(pr.filaments)]}
+    target = via
+    if via == "auto":
+        target = "bambu_connect" if studio.bambu_connect() else "bambu_studio"
+    if target == "bambu_connect":
+        if not studio.bambu_connect():
+            raise ValueError("Bambu Connect is not installed (https://wiki.bambulab.com/en/software/bambu-connect); "
+                             "use via='bambu_studio'")
+        studio.send_to_bambu_connect(out, f"{pr.name} - {pl.name}")
+        res["next_step"] = "Bambu Connect is open with the file: choose the printer, check the AMS slots, press Send."
+    elif target == "bambu_studio":
+        studio.open_in_gui(out)
+        res["next_step"] = ("Bambu Studio is open on the sliced plate: check printer and AMS mapping, then press "
+                            "'Print plate' (Stampa piatto).")
+    else:
+        res["next_step"] = "File exported only."
+    res["via"] = target
+    return res
+
+
+@mcp.tool()
+def printer_status() -> dict:
+    """Read-only status of the printer on the local network: state, job, progress, remaining time, layer,
+    temperatures, AMS trays (type, color, remaining %), active slot, errors. Works with the printer in normal
+    cloud mode (Bambu Handy keeps working). Nothing is sent to the printer except a status request."""
+    rep, serial = printer.status()
+    out = printer.summarize(rep)
+    out["printer"] = f"...{serial[-4:]}"
+    return out
+
+
+@mcp.tool()
+def use_ams_filaments(ams_slots: list[int] | None = None) -> dict:
+    """Set the project's filament slots from what is loaded in the AMS right now (preset and color), like
+    Bambu Studio's 'sync AMS'. Default: every loaded tray in order (project slot 1 = first loaded tray).
+    ams_slots: pick trays explicitly, e.g. [1, 3] -> project slot 1 = AMS slot 1, project slot 2 = AMS slot 3."""
+    pr = P()
+    rep, _ = printer.status()
+    trays = {t["slot"]: t for t in printer.summarize(rep)["ams_trays"]}
+    order = ams_slots or [k for k, t in sorted(trays.items()) if not t.get("empty")]
+    if not order:
+        raise ValueError("no filament loaded in the AMS")
+    new, mapping = [], []
+    for k in order:
+        t = trays.get(k)
+        if not t or t.get("empty"):
+            raise ValueError(f"AMS slot {k} is empty")
+        preset = printer.preset_for_tray(t.get("filament_id"), t.get("type"), pr.machine)
+        new.append((preset, t.get("color") or "#FFFFFF"))
+        mapping.append({"project_slot": len(new), "ams_slot": k, "preset": preset, "color": t.get("color"),
+                        "loaded": t.get("name")})
+    used = pr.used_filaments()
+    pr.filaments = new
+    res = {"filaments": mapping}
+    missing = [f for f in used if f > len(new)]
+    if missing:
+        res["warning"] = f"objects use slots {missing} that no longer exist: reassign them with set_object_filament"
+    return res
 
 
 def main():

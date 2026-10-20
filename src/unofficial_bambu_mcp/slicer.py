@@ -133,3 +133,23 @@ def layer_paths(gtext, layer=None, z=None):
             segs.append((x, y, nx, ny, tool, feature))
         x, y = nx, ny
     return segs, k + 1, layers[k][1] or 0.0, len(layers)
+
+def export_plate(path, plate, out_path, timeout=1800):
+    """Print file for one plate (.gcode.3mf: G-code, md5, thumbnails, slice info), the format Bambu Studio,
+    Bambu Connect and the printer accept. Returns the plate stats."""
+    exe = studio.executable()
+    if not exe:
+        raise SliceError("Bambu Studio not found (set BAMBU_STUDIO_EXE)")
+    work = tempfile.mkdtemp(prefix="ubmcp_")
+    try:
+        r = subprocess.run([exe, "--outputdir", work, "--slice", str(plate), "--min-save", "--export-3mf",
+                            "plate.gcode.3mf", os.path.abspath(path)], capture_output=True, text=True, timeout=timeout)
+        out = os.path.join(work, "plate.gcode.3mf")
+        if r.returncode != 0 or not os.path.exists(out):
+            tail = "\n".join((r.stdout + r.stderr).splitlines()[-15:])
+            raise SliceError(f"export failed for plate {plate}\n{tail}")
+        shutil.move(out, out_path)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    stats = threemf.sliced_stats(out_path)
+    return stats[0] if stats else {}

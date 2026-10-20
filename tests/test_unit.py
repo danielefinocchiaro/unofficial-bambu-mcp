@@ -78,3 +78,25 @@ def test_filament_matched_to_printer():
     from unofficial_bambu_mcp import presets
     m = presets.machine_name("A1M")
     assert presets.filament_for("Bambu PLA Basic @BBL X1C", m).endswith("@BBL A1M")
+
+
+def test_printer_summary():
+    from unofficial_bambu_mcp import printer
+    rep = {"gcode_state": "RUNNING", "mc_percent": 42, "mc_remaining_time": 87, "layer_num": 9, "total_layer_num": 20,
+           "nozzle_temper": 219.8, "nozzle_target_temper": 220, "bed_temper": 64.9, "bed_target_temper": 65,
+           "ams": {"tray_now": "1", "ams": [{"id": "0", "humidity": "4", "tray": [
+               {"id": "0", "tray_type": "PLA", "tray_sub_brands": "PLA Matte", "tray_color": "000000FF", "remain": 70},
+               {"id": "1", "tray_type": "PLA", "tray_color": "FFFFFFFF", "remain": -1, "tray_info_idx": "GFL03"},
+               {"id": "2"}]}]}}
+    s = printer.summarize(rep)
+    assert s["state"] == "printing" and s["progress_percent"] == 42 and s["layer"] == [9, 20]
+    assert s["ams_trays"][1]["color"] == "#FFFFFF" and s["ams_trays"][2]["empty"]
+    assert s["active_slot"] == 2
+
+
+@needs_bambu
+def test_preset_for_tray():
+    from unofficial_bambu_mcp import presets, printer
+    m = presets.machine_name("P1S")
+    assert printer.preset_for_tray("GFL03", "PLA", m).startswith("eSUN PLA+")
+    assert printer.preset_for_tray(None, "PETG", m) == "Generic PETG"

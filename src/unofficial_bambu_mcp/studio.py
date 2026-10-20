@@ -131,3 +131,31 @@ def open_in_gui(path):
     else:
         subprocess.Popen([executable() or "bambu-studio", path])
     return path
+
+
+def bambu_connect():
+    """Path of the Bambu Connect app, if installed."""
+    if SYSTEM == "Darwin":
+        for c in ("/Applications/Bambu Connect.app", os.path.expanduser("~/Applications/Bambu Connect.app")):
+            if os.path.exists(c):
+                return c
+    elif SYSTEM == "Windows":
+        for root in (os.environ.get("LOCALAPPDATA", ""), os.environ.get("ProgramFiles", r"C:\Program Files")):
+            hits = glob.glob(os.path.join(root, "*", "Bambu Connect*.exe"))
+            hits += glob.glob(os.path.join(root, "Programs", "*", "Bambu Connect*.exe"))
+            if hits:
+                return hits[0]
+    return None
+
+
+def send_to_bambu_connect(path, name):
+    """Hand a sliced .gcode.3mf to Bambu Connect (official URL scheme). The user picks the printer and presses Send."""
+    from urllib.parse import quote
+    url = f"bambu-connect://import-file?path={quote(os.path.abspath(path), safe='')}&name={quote(name, safe='')}&version=1.0.0"
+    if SYSTEM == "Darwin":
+        subprocess.Popen(["open", url])
+    elif SYSTEM == "Windows":
+        os.startfile(url)  # noqa: S606
+    else:
+        subprocess.Popen(["xdg-open", url])
+    return url
