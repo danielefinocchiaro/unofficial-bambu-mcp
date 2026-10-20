@@ -287,3 +287,67 @@ def crop_height(verts, tris, z_max):
     cutter = m3.Manifold.cube((hi[0] - lo[0] + 2, hi[1] - lo[1] + 2, z_max - lo[2])).translate(
         (lo[0] - 1, lo[1] - 1, lo[2]))
     return from_manifold(m ^ cutter)
+
+
+# ---------------------------------------------------------------- mirror, lay flat, cut
+def mirror(verts, tris, axis="x"):
+    """Mirror across a plane through the origin; triangle winding is flipped so normals stay outward."""
+    v = np.array(verts, float)
+    v[:, "xyz".index(axis)] *= -1
+    return v, np.asarray(tris)[:, [0, 2, 1]]
+
+
+def rotation_between(a, b):
+    """3x3 rotation taking unit vector a onto unit vector b (Rodrigues)."""
+    a = np.asarray(a, float) / np.linalg.norm(a)
+    b = np.asarray(b, float) / np.linalg.norm(b)
+    v = np.cross(a, b)
+    c = float(np.dot(a, b))
+    if np.linalg.norm(v) < 1e-9:
+        if c > 0:
+            return np.eye(3)
+        axis = np.array([1.0, 0, 0]) if abs(a[0]) < 0.9 else np.array([0, 1.0, 0])
+        axis -= axis.dot(a) * a
+        axis /= np.linalg.norm(axis)
+        return 2 * np.outer(axis, axis) - np.eye(3)
+    k = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+    return np.eye(3) + k + k @ k * (1 / (1 + c))
+
+
+def flat_faces(verts, top=5):
+    """Biggest flat faces of the convex hull: [(area_mm2, outward normal)], largest first."""
+    _need_manifold()
+    hull = m3.Manifold.hull_points(np.asarray(verts, float))
+    hv, ht = from_manifold(hull)
+    tri = hv[ht]
+    n = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    area = np.linalg.norm(n, axis=1) / 2
+    ok = area > 1e-9
+    n = n[ok] / (2 * area[ok, None])
+    area = area[ok]
+    groups = {}
+    for ni, ai in zip(n, area, strict=True):
+        key = tuple(np.round(ni, 2))
+        g = groups.setdefault(key, [0.0, np.zeros(3)])
+        g[0] += ai
+        g[1] += ai * ni
+    faces = sorted(((a, s / np.linalg.norm(s)) for a, s in groups.values()), key=lambda x: -x[0])
+    return faces[:top]
+
+
+def lay_flat_matrix(verts, face=1):
+    """Rotation that puts the face-th biggest hull face on the bed (normal pointing down)."""
+    faces = flat_faces(verts, top=max(5, face))
+    area, normal = faces[min(face, len(faces)) - 1]
+    return rotation_between(normal, (0, 0, -1)), area
+
+
+def split_z(verts, tris, z):
+    """Cut a closed solid with the horizontal plane at height z: (below, above) as (verts, tris) or None."""
+    _need_manifold()
+    m = to_manifold(verts, tris)
+    above, below = m.split_by_plane((0.0, 0.0, 1.0), float(z))
+    out = []
+    for piece in (below, above):
+        out.append(None if piece.is_empty() else from_manifold(piece))
+    return out[0], out[1]

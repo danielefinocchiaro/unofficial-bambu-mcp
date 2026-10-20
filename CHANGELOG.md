@@ -7,6 +7,13 @@
 - Layer actions: pause, AMS filament change and custom G-code at a height, read from and written to
   `Metadata/custom_gcode_per_layer.xml` in Bambu Studio's format.
 - `save_filament_preset`: save a slot's tuned settings as a Bambu Studio user preset (never overwrites).
+- `mirror_object`, `lay_flat` (biggest flat face of the convex hull on the bed), `cut_object` (horizontal cut,
+  top piece flipped onto the cut face).
+- `add_modifier` / `remove_part`: box modifiers with settings, negative parts, support blockers/enforcers.
+- `make_max_flow_test` (single-wall cylinders at increasing volumetric speed) and `make_retraction_test` (one small
+  stringing test per retraction length), as separate project files.
+- Sync with Bambu Studio: the project file is re-read when it was saved in the app and there are no unsaved changes;
+  conflicts are reported; `sync_with_bambu_studio` to force it.
 
 ## 0.1.0 (unreleased)
 

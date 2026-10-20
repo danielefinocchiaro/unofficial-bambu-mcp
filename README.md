@@ -21,12 +21,13 @@ You talk, it does the slicer work:
 | Projects | Create a project, or **open any .3mf** saved by Bambu Studio or downloaded from MakerWorld: painted colors, modifiers, per-object settings and multiple instances are kept. Save without ever overwriting. |
 | Printers | P1S, P1P, P2S, X1C, X1, X1E, A1, A1 mini, H2S (single nozzle, 0.4) or any machine preset. **Switch printer** and objects are re-arranged for the new bed (e.g. P1S → A1 mini). |
 | Filaments | AMS slots with preset and color. Filament names are matched to the printer ("eSUN PLA+" → the P1S or A1 mini preset). Your own user presets work too. |
-| Plates & objects | Add, rename, remove plates. Import STL, OBJ, 3MF. Boxes, cylinders, cones, spheres and **text**. Move, rotate, scale, duplicate, **auto-arrange**, filament per object or per part, per-object settings, closed-solid check. |
+| Plates & objects | Add, rename, remove plates. Import STL, OBJ, 3MF. Boxes, cylinders, cones, spheres and **text**. Move, rotate, scale, **mirror**, **lay flat** on the biggest face, **cut** at a height, duplicate, **auto-arrange**, filament per object or per part, per-object settings, closed-solid check. |
+| Modifiers | Box modifiers with their own settings ("the top 5 mm at 100% infill"), negative parts, support blockers and enforcers, on the whole object or a region. |
 | Settings | Read or change any Bambu Studio setting, per filament slot when it applies (e.g. plate temperatures). Presets are resolved like Bambu Studio does (`inherits`, `include`). |
 | Slicing | Uses the Bambu Studio command line: time, grams per filament, filament changes, layers and warnings for every plate. |
 | Previews | Images of a plate (iso or top, zoom on the objects, painted colors shown) and of any **sliced layer**, so the assistant can check its own work. |
 | Test prints | Generate a plate with the first N mm of a model to check bed adhesion before a long print. |
-| Calibration | **Temperature tower** (temperature engraved on each block), **flow rate test** (per-object flow, percentage engraved on top, pass 1 and pass 2) and **pressure advance tower** (K changes every millimeter), for any filament, Bambu or not. Save the result as a **Bambu Studio user preset**. |
+| Calibration | **Temperature tower** (temperature engraved on each block), **flow rate test** (per-object flow, percentage engraved on top, pass 1 and pass 2) and **pressure advance tower** (K changes every millimeter), **max volumetric speed test** and **retraction (stringing) test**, for any filament, Bambu or not. Save the result as a **Bambu Studio user preset**. |
 | Layer actions | **Pause** at a height (magnets, nuts), **filament change** at a height (AMS), or any G-code at a height. Kept when you open and save Bambu Studio projects. |
 | Printing *(experimental)* | `send_to_printer` exports a plate as `.gcode.3mf` and opens it in **Bambu Connect** (official URL scheme) or **Bambu Studio**, where you check the AMS mapping and press Print. Nothing starts by itself, and the printer stays in cloud mode, so Bambu Handy keeps working. |
 | Printer status *(experimental)* | `printer_status` reads state, progress, remaining time, temperatures, AMS trays and errors on the local network, read-only. `use_ams_filaments` sets the project slots from what is loaded in the AMS. It uses the LAN access code Bambu Studio already saved, and finds the printer by itself. |
@@ -77,8 +78,9 @@ Bambu Studio has no plugin or scripting API. This server works on the **project 
 Bambu Studio saves) and calls the **Bambu Studio command line** to slice. Presets are read from your Bambu Studio
 installation and flattened the way the app does, because the command line does not resolve them.
 
-- **Not live.** Changes are written to a file. `open_in_bambu_studio` shows the result in the app window,
-  which reloads the project instead of moving objects in real time.
+- **Not live, but in sync.** Changes are written to a file. `open_in_bambu_studio` shows the result in the app
+  window, which reloads the project instead of moving objects in real time. If you edit the project by hand in
+  Bambu Studio and save it, the server re-reads it on the next command (and tells you if both sides changed).
 - **Safe with your files.** Nothing is ever overwritten: saving adds `-2`, `-3`... if a file exists, and opened
   projects are read as a copy.
 - **Light.** numpy, shapely, manifold3d, fonttools and Pillow. No Bambu profile is shipped with this repository.

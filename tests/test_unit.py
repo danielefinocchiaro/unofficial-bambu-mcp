@@ -138,3 +138,41 @@ def test_layer_actions_roundtrip(tmp_path):
     got = [g.as_dict() for g in back.plates[0].layer_gcodes]
     assert got == [{"z": 2.0, "kind": "pause", "message": "magnets"}, {"z": 4.0, "kind": "tool_change", "filament": 2},
                    {"z": 6.0, "kind": "custom", "gcode": "M104 S210"}]
+
+
+def test_mirror_keeps_solid_closed():
+    v, t = geometry.box(10, 20, 5)
+    v2, t2 = geometry.mirror(v + [3, 0, 0], t, "x")
+    info = geometry.check(v2, t2)
+    assert info["manifold"] and info["volume_mm3"] == pytest.approx(1000, rel=1e-6)
+
+
+def test_lay_flat_picks_biggest_face():
+    v, t = geometry.box(30, 10, 20)
+    R, area = geometry.lay_flat_matrix(geometry.rotate(v, 37, "x"))
+    assert area == pytest.approx(600, rel=1e-3)
+    h = np.ptp(geometry.rotate(v, 37, "x") @ R.T, axis=0)[2]
+    assert h == pytest.approx(10, abs=1e-6)
+
+
+def test_split_z():
+    v, t = geometry.cylinder(20, 30)
+    below, above = geometry.split_z(v, t, 12)
+    assert np.ptp(below[0], axis=0)[2] == pytest.approx(12, abs=1e-6)
+    assert np.ptp(above[0], axis=0)[2] == pytest.approx(18, abs=1e-6)
+
+
+@needs_bambu
+def test_modifier_roundtrip(tmp_path):
+    from unofficial_bambu_mcp import threemf
+    from unofficial_bambu_mcp.project import Obj, Part, Project
+    pr = Project("t", "P1S")
+    v, t = geometry.box(20, 20, 10)
+    mv, mt = geometry.box(22, 22, 3)
+    ob = Obj("Box", [Part("Box", v, t), Part("Top", mv + [0, 0, 7], mt, subtype="modifier_part",
+                                             meta={"sparse_infill_density": "100%"})], at=(100, 100))
+    pr.plates[0].objects.append(ob)
+    (_, back), = threemf.read(threemf.write(pr, str(tmp_path / "m.3mf"))).objects()
+    mod = [p for p in back.parts if p.subtype == "modifier_part"][0]
+    assert mod.meta["sparse_infill_density"] == "100%"
+    assert back.size()[2] == pytest.approx(10, abs=1e-3)       # modifiers do not change the object's size

@@ -124,3 +124,31 @@ def grid(objs, cols, gap=6.0):
         r, c = divmod(i, cols)
         out.append(((c - (min(cols, len(objs)) - 1) / 2) * w, ((rows - 1) / 2 - r) * d))
     return out
+
+
+# ---------------------------------------------------------------- max volumetric speed
+def flow_speed_cylinders(qs, line_w=0.42, layer_h=0.2, filament=1, d=30.0, h=15.0):
+    """One single-wall cylinder per volumetric speed Q (mm³/s), wall speed = Q / (line width × layer height),
+    plus a small tag with Q engraved (printed with normal settings). [(cylinder, tag, speed_mm_s)]"""
+    out = []
+    for q in qs:
+        speed = q / (line_w * layer_h)
+        v, t = geometry.cylinder(d, h)
+        cyl = Obj(f"Q{q:g} cylinder", [Part(f"Q{q:g} cylinder", v, t, filament)],
+                  settings={"wall_loops": "1", "sparse_infill_density": "0%", "top_shell_layers": "0",
+                            "bottom_shell_layers": "3", "outer_wall_speed": f"{speed:.0f}",
+                            "inner_wall_speed": f"{speed:.0f}", "brim_type": "no_brim"})
+        tag = _engrave_top(_box(-8, -4, 0, 8, 4, 1.2), f"{q:g}", 0.0, 0.0, 1.2, cap=4.5, depth=0.4)
+        tv, tt = _mesh(tag)
+        out.append((cyl, Obj(f"Q{q:g} tag", [Part(f"Q{q:g} tag", tv, tt, filament)]), speed))
+    return out
+
+
+# ---------------------------------------------------------------- retraction / stringing
+def stringing_test(filament=1):
+    """Two thin pillars on a strip: travel between them shows stringing."""
+    base = _box(-30, -5, 0, 30, 5, 0.8)
+    p1 = m3.Manifold.cylinder(25.0, 2.5, circular_segments=48).translate((-22, 0, 0.6))
+    p2 = m3.Manifold.cylinder(25.0, 2.5, circular_segments=48).translate((22, 0, 0.6))
+    v, t = _mesh(m3.Manifold.batch_boolean([base, p1, p2], m3.OpType.Add))
+    return Obj("Stringing test", [Part("Stringing test", v, t, filament)], settings={"brim_type": "no_brim"})

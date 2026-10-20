@@ -1,6 +1,6 @@
 # Tools
 
-40 tools, generated from the server code by `scripts/gen_tools_doc.py`.
+48 tools, generated from the server code by `scripts/gen_tools_doc.py`.
 
 ## `bambu_status`
 
@@ -55,7 +55,7 @@ save_project writes a new file. Returns the project summary and what could not b
 ## `get_project`
 
 Current project: printer, process, filament slots, plates, objects (id, name, center, size, filaments),
-setting overrides and warnings.
+setting overrides and warnings. If the project was saved in Bambu Studio in the meantime it is re-read first.
 
 ## `set_printer`
 
@@ -425,3 +425,94 @@ picked for an AMS slot. Never overwrites an existing preset.
 |---|---|---|
 | `slot` | integer | required |
 | `name` | string | required |
+
+## `sync_with_bambu_studio`
+
+Re-read the project file after you changed it by hand in Bambu Studio and saved (same file).
+This also happens automatically on the next command when there are no unsaved changes here;
+force=True takes the app's version even if there are (they are lost).
+
+| Parameter | Type | Default |
+|---|---|---|
+| `force` | boolean | `False` |
+
+## `mirror_object`
+
+Mirror an object across its own center (axis x, y or z).
+
+| Parameter | Type | Default |
+|---|---|---|
+| `object` | string | required |
+| `axis` | string | `'x'` |
+
+## `lay_flat`
+
+Rotate an object so one of its flat faces lies on the bed: face 1 = the biggest flat face,
+2 = the second biggest, and so on.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `object` | string | required |
+| `face` | integer | `1` |
+
+## `cut_object`
+
+Cut an object horizontally at height z (mm from its bottom). keep: both | bottom | top. With flip_top the top
+piece is turned upside down so it prints on the flat cut face. Modifiers and painted colors are not kept.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `object` | string | required |
+| `z` | number | required |
+| `keep` | string | `'both'` |
+| `flip_top` | boolean | `True` |
+
+## `add_modifier`
+
+Add a box-shaped part to an object, covering its whole footprint between z_from and z_to (mm from the
+object's bottom; z_to 0 = top), or only region [x0, y0, x1, y1] (mm from the object's center).
+kind: modifier (different settings inside, e.g. {"sparse_infill_density": "100%"} for the top 5 mm),
+negative (removes material), support_blocker, support_enforcer.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `object` | string | required |
+| `settings` | object / null | `None` |
+| `kind` | string | `'modifier'` |
+| `z_from` | number | `0` |
+| `z_to` | number | `0` |
+| `region` | array / null | `None` |
+
+## `remove_part`
+
+Remove a part (e.g. a modifier) from an object, by part name. The last solid part cannot be removed.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `object` | string | required |
+| `part` | string | required |
+
+## `make_max_flow_test`
+
+Max volumetric speed test for a filament slot, as a separate project file (the open project is not changed):
+single-wall cylinders, each printed at the wall speed that gives the volumetric speed Q (mm³/s) on its tag.
+Default range: around the filament's current limit. The highest Q without gaps or weak walls is the max;
+use a bit less (about 90%) as filament_max_volumetric_speed.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `filament` | integer | `1` |
+| `low` | number | `0` |
+| `high` | number | `0` |
+| `step` | number | `2` |
+
+## `make_retraction_test`
+
+Stringing test for a filament slot: one small separate project per retraction length (Bambu printers cannot
+change retraction during a print). Print them one after the other and keep the shortest length without strings
+between the two pillars; then set_setting('filament_retraction_length', value, slot) or save_filament_preset.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `filament` | integer | `1` |
+| `lengths` | array / null | `None` |
