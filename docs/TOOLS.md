@@ -1,6 +1,6 @@
 # Tools
 
-49 tools, generated from the server code by `scripts/gen_tools_doc.py`.
+50 tools, generated from the server code by `scripts/gen_tools_doc.py`.
 
 ## `bambu_status`
 
@@ -305,6 +305,18 @@ labels: write each object's id and name on it, e.g. view='top', labels=True to t
 | `view` | string | `'iso'` |
 | `zoom` | boolean | `False` |
 | `labels` | boolean | `False` |
+
+## `check_print_risks`
+
+Before a long print: parts likely to come off or topple, and settings that do not fit. Per plate (0 = all):
+tall and narrow parts (height against the smaller side of the footprint), parts standing on a narrow or tiny
+footing without a brim (e.g. pins lying on their side), filaments whose temperature for this build plate is 0
+(not meant for it), and plates where tall parts share a long print with many others (a part that fails late can
+knock the others: print them apart).
+
+| Parameter | Type | Default |
+|---|---|---|
+| `plate` | integer | `0` |
 
 ## `reprint_objects`
 

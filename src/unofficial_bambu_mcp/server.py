@@ -614,6 +614,89 @@ def preview_plate(plate: int = 1, view: str = "iso", zoom: bool = False, labels:
                                            object_labels=labels), format="png")
 
 
+def _footing(o):
+    """What holds an object during the first layers: (mm² on the bed, narrowest width in mm and smallest area in mm²
+    of its separate contact areas, e.g. each pin of a set), from the solid faces lying on the bed."""
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+    lo = o.bbox()[0][2]
+    polys = []
+    for p in o.solid_parts():
+        tri = p.verts[p.tris]
+        n = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+        for t in tri[(tri[:, :, 2] <= lo + 0.05).all(axis=1) & (n[:, 2] < 0)]:
+            pg = Polygon(t[:, :2])
+            if pg.area > 1e-6:
+                polys.append(pg.buffer(0.01))
+    if not polys:
+        return 0.0, 0.0, 0.0
+    shape = unary_union(polys)
+    pieces = [pc for pc in getattr(shape, "geoms", [shape]) if pc.area >= 1.0]
+    widths = []
+    for pc in pieces:
+        x, y = pc.minimum_rotated_rectangle.exterior.coords.xy
+        sides = [((x[i + 1] - x[i]) ** 2 + (y[i + 1] - y[i]) ** 2) ** 0.5 for i in range(2)]
+        widths.append(min(sides))
+    return float(shape.area), (min(widths) if widths else 0.0), (min(pc.area for pc in pieces) if pieces else 0.0)
+
+
+@tool()
+def check_print_risks(plate: int = 0) -> list:
+    """Before a long print: parts likely to come off or topple, and settings that do not fit. Per plate (0 = all):
+    tall and narrow parts (height against the smaller side of the footprint), parts standing on a narrow or tiny
+    footing without a brim (e.g. pins lying on their side), filaments whose temperature for this build plate is 0
+    (not meant for it), and plates where tall parts share a long print with many others (a part that fails late can
+    knock the others: print them apart)."""
+    pr = P()
+    cfg = pr.config()
+    bed = cfg.get("curr_bed_type") or "Textured PEI Plate"
+    fam = PLATE_TEMP.get(bed)
+    plates = [plate] if plate else list(range(1, len(pr.plates) + 1))
+    out = []
+    pr.objects()
+    for n in plates:
+        pl = pr.plate(n)
+        risks, tall = [], []
+        for o in pl.objects:
+            w, d, h = (float(x) for x in o.size())
+            brim = o.settings.get("brim_type") or cfg.get("brim_type") or "auto_brim"
+            area, width, piece = _footing(o)
+            why = []
+            if h >= 40 and h / max(min(w, d), 0.1) >= 4:
+                why.append(f"{h:.0f} mm high on a {min(w, d):.0f} mm side")
+            if brim in ("no_brim", "auto_brim"):
+                if area < 1:
+                    why.append("almost no flat face on the bed")
+                elif width and (h / width >= 4 or (width < 15 and h / width >= 1.5)):
+                    why.append(f"stands on a {width:.1f} mm wide footing for {h:.1f} mm of height")
+                elif piece < 250:
+                    why.append(f"a piece holds on {piece:.0f} mm² of the bed only")
+            if why:
+                fix = "give it an outer brim: set_object_setting(object, 'brim_type', 'outer_only')"
+                if h >= 40 and h / max(min(w, d), 0.1) >= 4:
+                    fix += "; or lay it down / cut it, and avoid sport speed"
+                risks.append({"object": o.name, "id": o.uid, "risk": "; ".join(why) +
+                              (", no brim" if brim == "no_brim" else (", brim left to auto" if brim == "auto_brim" else "")),
+                              "advice": fix})
+            if h >= 120:
+                tall.append(o.name)
+        used = sorted({f for o in pl.objects for f in o.filaments()})
+        for f in used:
+            for key in (fam, fam + "_initial_layer") if fam else ():
+                vals = cfg.get(key) or []
+                if f <= len(vals) and str(vals[f - 1]).strip() in ("0", ""):
+                    risks.append({"filament": f, "risk": f"{pr.filaments[f - 1][0].split(' @')[0]} has {key} = 0: "
+                                                         f"not meant for the {bed}",
+                                  "advice": "use another plate (set_setting('curr_bed_type', ...)) or another filament"})
+                    break
+        if tall and len(pl.objects) >= 5:
+            risks.append({"risk": f"{len(tall)} part(s) over 120 mm ({', '.join(tall[:4])}) share the plate with "
+                                  f"{len(pl.objects) - len(tall)} others",
+                          "advice": "print the tall parts on their own plate: if one fails late it can ruin the rest"})
+        out.append({"plate": n, "objects": len(pl.objects), "risks": risks or "none found"})
+    return out
+
+
 @tool()
 def reprint_objects(objects: list[str], brim: bool = True, name: str = "", slice: bool = True) -> dict:
     """A new project with only some objects of the open one, e.g. a part that came off the plate and was skipped:

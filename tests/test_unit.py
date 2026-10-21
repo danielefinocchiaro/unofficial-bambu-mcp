@@ -492,3 +492,21 @@ def test_printer_advice_and_skipped_objects(tmp_path):
         z.writestr("Metadata/slice_info.config", '<config><plate><object identify_id="648" name="pin_short x2 b" '
                    'skipped="false" /></plate></config>')
     assert threemf.object_names(str(p)) == {648: "pin_short x2 b"}
+
+
+@needs_bambu
+def test_check_print_risks(tmp_path, monkeypatch):
+    monkeypatch.setenv("UBMCP_DIR", str(tmp_path))
+    from unofficial_bambu_mcp import server as s
+    s.new_project("risks", "P1S")
+    s.set_setting("brim_type", "no_brim")
+    s.add_shape("box", width=6, depth=6, height=60, name="pole")
+    s.add_shape("box", width=40, depth=40, height=10, name="slab")
+    s.add_shape("cylinder", diameter=12, height=8, name="peg")
+    (r,) = s.check_print_risks(1)
+    flagged = {x["object"]: x["risk"] for x in r["risks"] if "object" in x}
+    assert set(flagged) == {"pole", "peg"} and "60 mm high on a 6 mm side" in flagged["pole"]
+    assert "113 mm²" in flagged["peg"]
+    s.set_object_setting("peg", "brim_type", "outer_only")
+    (r,) = s.check_print_risks(1)
+    assert {x["object"] for x in r["risks"] if "object" in x} == {"pole"}
