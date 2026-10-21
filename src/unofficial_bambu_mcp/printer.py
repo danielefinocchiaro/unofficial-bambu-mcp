@@ -363,6 +363,33 @@ def summarize(r):
     now = ams.get("tray_now")
     if now not in (None, "", "255"):
         out["active_slot"] = "external spool" if now == "254" else int(now) + 1
+    if r.get("s_obj"):
+        out["skipped_objects"] = [int(x) for x in r["s_obj"] if str(x).lstrip("-").isdigit()]
+    return out
+
+
+def advice(s, expected=()):
+    """Warnings about a running job, from a summary: the spool being fed, the speed mode.
+    expected: [(project slot, preset, filament_id)] of the job's project, when it is known."""
+    if s.get("state") not in ("printing", "paused", "preparing"):
+        return []
+    out = []
+    act = s.get("active_slot")
+    tray = next((t for t in s.get("ams_trays", []) if t["slot"] == act), None) if isinstance(act, int) else None
+    ids = {fid for _, _, fid in expected if fid}
+    if tray and tray.get("unknown"):
+        msg = (f"the printer is feeding from AMS slot {act}, a spool the AMS does not know: no auto-refill when it "
+               "runs out, and the grams left are unknown")
+        if ids:
+            homes = [f"'{t['name']}' in slot {t['slot']}" for t in s.get("ams_trays", []) if t.get("filament_id") in ids]
+            msg += "; the project's filament is " + (", ".join(homes) if homes else "not loaded in the AMS")
+        out.append(msg)
+    elif tray and ids and tray.get("filament_id") not in ids:
+        want = ", ".join(sorted({p.split(" @")[0] for _, p, _ in expected}))
+        out.append(f"the printer is feeding {tray.get('name')} from AMS slot {act}, but the project uses {want}")
+    if s.get("speed_level") in ("sport", "ludicrous") and (s.get("remaining_minutes") or 0) > 120:
+        out.append(f"speed mode is {s['speed_level']} with {s['remaining_minutes'] // 60} h to go: tall or small parts "
+                   "are more likely to come off; standard is safer for long prints")
     return out
 
 

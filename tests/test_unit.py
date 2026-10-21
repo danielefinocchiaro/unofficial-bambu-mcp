@@ -470,3 +470,25 @@ def test_reprint_objects_and_labels(tmp_path, monkeypatch):
     assert o.name == "pin b" and o.settings["brim_type"] == "outer_only" and o.parts[0].filament == 2
     assert len(t.filaments) == 2 and t.overrides["sparse_infill_density"] == "25%"
     assert [x.name for _, x in s.P().objects()] == ["pin a", "pin b", "body"]      # the open project is untouched
+
+
+def test_printer_advice_and_skipped_objects(tmp_path):
+    import zipfile
+
+    from unofficial_bambu_mcp import printer, threemf
+    s = printer.summarize({"gcode_state": "RUNNING", "mc_remaining_time": 1085, "spd_lvl": 3, "s_obj": [648, 670],
+                           "ams": {"tray_now": "0", "tray_exist_bits": "3", "ams": [{"id": "0", "tray": [
+                               {"id": "0"}, {"id": "1", "tray_type": "PLA", "tray_color": "161616FF",
+                                             "tray_info_idx": "P80ed8f6"}]}]}})
+    assert s["skipped_objects"] == [648, 670] and s["active_slot"] == 1
+    w = printer.advice(s, [(1, "eSUN PLA Basic Nero @Bambu Lab P1S 0.4 nozzle", "P80ed8f6")])
+    assert any("slot 1" in x and "no auto-refill" in x and "slot 2" in x for x in w)
+    assert any("sport" in x for x in w)
+    s["active_slot"] = 2
+    assert not [x for x in printer.advice(s, [(1, "eSUN PLA Basic Nero", "P80ed8f6")]) if "feeding" in x]
+    assert printer.advice({"state": "idle"}) == []
+    p = tmp_path / "job.gcode.3mf"
+    with zipfile.ZipFile(p, "w") as z:
+        z.writestr("Metadata/slice_info.config", '<config><plate><object identify_id="648" name="pin_short x2 b" '
+                   'skipped="false" /></plate></config>')
+    assert threemf.object_names(str(p)) == {648: "pin_short x2 b"}

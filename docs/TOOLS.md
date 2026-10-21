@@ -361,8 +361,10 @@ Tell the user what to press, and the time, weight and filaments of the plate.
 
 Read-only status of the printer on the local network: state, job, progress, remaining time, layer
 (or the last job's result when idle), temperatures, AMS trays (type, color, remaining %; 'unknown' = a spool
-the AMS has not been told about), AMS humidity and temperature, active slot, errors. Works with the printer in normal
-cloud mode (Bambu Handy keeps working). Nothing is sent to the printer except a status request.
+the AMS has not been told about), AMS humidity and temperature, active slot, errors, objects skipped during the
+print, and warnings (the spool being fed is unknown or not the project's filament, sport speed on a long print).
+Works with the printer in normal cloud mode (Bambu Handy keeps working). Nothing is sent to the printer except a
+status request.
 
 ## `use_ams_filaments`
 

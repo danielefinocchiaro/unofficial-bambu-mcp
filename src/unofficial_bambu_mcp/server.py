@@ -48,6 +48,7 @@ class Session:
     watch_mtime = 0.0
     dirty = False         # changes made here and not saved yet
     note = None           # one-shot message for the next answer (e.g. "reloaded from Bambu Studio")
+    exported = {}         # job name (project name) -> last print file made by send_to_printer
 
 
 S = Session()
@@ -731,6 +732,7 @@ def send_to_printer(plate: int = 1, via: str = "auto") -> dict:
     finally:
         if os.path.exists(tmp):
             os.remove(tmp)
+    S.exported[pr.name] = out             # Bambu apps name the job after the project
     res = {"print_file": out, "plate": plate, "printer": pr.machine, "build_plate": pl.settings.get("bed_type")
            or pr.config().get("curr_bed_type"), "minutes": st.get("minutes"), "grams": st.get("grams"),
            "warnings": st.get("warnings", []),
@@ -759,11 +761,31 @@ def send_to_printer(plate: int = 1, via: str = "auto") -> dict:
 def printer_status() -> dict:
     """Read-only status of the printer on the local network: state, job, progress, remaining time, layer
     (or the last job's result when idle), temperatures, AMS trays (type, color, remaining %; 'unknown' = a spool
-    the AMS has not been told about), AMS humidity and temperature, active slot, errors. Works with the printer in normal
-    cloud mode (Bambu Handy keeps working). Nothing is sent to the printer except a status request."""
+    the AMS has not been told about), AMS humidity and temperature, active slot, errors, objects skipped during the
+    print, and warnings (the spool being fed is unknown or not the project's filament, sport speed on a long print).
+    Works with the printer in normal cloud mode (Bambu Handy keeps working). Nothing is sent to the printer except a
+    status request."""
     rep, serial = printer.status()
     out = printer.summarize(rep)
     out["printer"] = f"...{serial[-4:]}"
+    job = out.get("job") or ""
+    expected = []
+    if S.project and job and job.rsplit(".", 1)[0] == S.project.name:
+        for i, (preset, _) in enumerate(S.project.filaments, start=1):
+            try:
+                expected.append((i, preset, presets.flat("filament", preset).get("filament_id")))
+            except presets.PresetError:
+                pass
+    warnings = printer.advice(out, expected)
+    if out.get("skipped_objects"):
+        names = threemf.object_names(S.exported[job]) if job in S.exported else {}
+        out["skipped_objects"] = [{"id": i, **({"name": names[i]} if i in names else {})}
+                                  for i in out["skipped_objects"]]
+        if not names:
+            warnings.append("skipped objects are listed by the ids Bambu Studio gave them when slicing; their names "
+                            "are known only for jobs sent with send_to_printer")
+    if warnings:
+        out["warnings"] = warnings
     return out
 
 

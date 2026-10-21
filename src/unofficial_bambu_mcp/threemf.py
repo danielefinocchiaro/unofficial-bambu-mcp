@@ -471,6 +471,16 @@ def read(path):
     return proj
 
 
+def object_names(path):
+    """{identify_id: object name} from a sliced file's slice_info.config (the ids printers use to skip objects)."""
+    try:
+        with zipfile.ZipFile(path) as z:
+            info = z.read("Metadata/slice_info.config").decode()
+    except (OSError, KeyError, zipfile.BadZipFile):
+        return {}
+    return {int(i): n for i, n in re.findall(r'<object identify_id="(\d+)" name="([^"]*)"', info)}
+
+
 def sliced_stats(path):
     """Per-plate time, weight and filaments from a sliced .3mf (Metadata/slice_info.config)."""
     with zipfile.ZipFile(path) as z:
