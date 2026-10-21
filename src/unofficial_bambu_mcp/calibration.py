@@ -30,8 +30,8 @@ def _engrave_front(solid, text, cx, cz, y_face, cap=4.5, depth=0.6, spacing=0.0)
     return solid - m
 
 
-def _engrave_top(solid, text, cx, cy, z_top, cap=5.0, depth=0.6):
-    shape = geometry.text_outline(text, cap)
+def _engrave_top(solid, text, cx, cy, z_top, cap=5.0, depth=0.6, spacing=0.0):
+    shape = geometry.text_outline(text, cap, spacing=spacing)
     v, t = geometry.extrude(shape, depth + 1.0)
     m = geometry.to_manifold(v, t).translate((cx, cy, z_top - depth))
     return solid - m
@@ -81,7 +81,8 @@ def flow_blocks(modifiers, filament=1, size=22.0, height=2.0):
     for mod in modifiers:
         blk = _box(-size / 2, -size / 2, 0, size / 2, size / 2, height)
         label = f"{mod:+g}" if mod else "0"
-        blk = _engrave_top(blk, label, 0.0, size / 2 - 5.0, height, cap=4.0, depth=0.4)
+        # readable on dark filaments too: 4 mm / 0.4 mm labels filled up on a black eSUN print
+        blk = _engrave_top(blk, label, 0.0, size / 2 - 5.5, height, cap=6.0, depth=0.8, spacing=0.4)
         v, t = _mesh(blk)
         ratio = round(1.0 + mod / 100.0, 4)
         ob = Obj(f"Flow {label}%", [Part(f"Flow {label}%", v, t, filament)],
