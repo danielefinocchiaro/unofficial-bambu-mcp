@@ -2,10 +2,12 @@
 
 Unofficial community project, not affiliated with or endorsed by Bambu Lab.
 """
+import functools
 import os
 
 import numpy as np
 from mcp.server.mcpserver import Image, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 from . import calibration, geometry, presets, preview, printer, slicer, studio, threemf
 from .project import LayerGcode, Obj, Part, Plate, Project, next_free_path
@@ -20,6 +22,20 @@ Always look at preview_plate after changing the layout, and report slicing warni
 send_to_printer never starts a print: it opens an official Bambu app where the user presses Print/Send."""
 
 mcp = MCPServer("unofficial-bambu-mcp", instructions=INSTRUCTIONS, version="0.1.0")
+
+
+def tool():
+    """mcp.tool() that lets the model read why a call failed. The SDK shows the text of a ToolError only, and
+    our errors say what to do next (wrong slot, printer refused, preset not found...)."""
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except (ValueError, LookupError, OSError, RuntimeError) as e:
+                raise ToolError(str(e) or type(e).__name__) from e
+        return mcp.tool()(wrapper)
+    return deco
 
 
 class Session:
@@ -80,6 +96,13 @@ def _short():
     return _with_note(p)
 
 
+def _use_preferred_bed(pr):
+    """Build plate = the one the user picked in Bambu Studio for this printer, when there is one."""
+    bed = studio.preferred_bed_type(pr.machine)
+    if bed:
+        pr.overrides["curr_bed_type"] = bed
+
+
 def _with_note(d):
     if S.note:
         d["note"] = S.note
@@ -91,7 +114,7 @@ def _with_note(d):
 
 
 # ---------------------------------------------------------------- environment
-@mcp.tool()
+@tool()
 def bambu_status() -> dict:
     """Where Bambu Studio is installed, its version, whether it is running, and the current project."""
     return {
@@ -102,7 +125,7 @@ def bambu_status() -> dict:
     }
 
 
-@mcp.tool()
+@tool()
 def list_printers() -> list:
     """Printer short names that can be used anywhere a printer is asked (a full machine preset name works too)."""
     out = []
@@ -115,7 +138,7 @@ def list_printers() -> list:
     return out
 
 
-@mcp.tool()
+@tool()
 def search_presets(kind: str, query: str = "", printer: str = "", limit: int = 30) -> list:
     """Find presets. kind: filament | process | machine. query: words to match (e.g. 'eSUN PLA+', '0.16mm').
     With printer, only presets compatible with it. User presets come first."""
@@ -124,27 +147,29 @@ def search_presets(kind: str, query: str = "", printer: str = "", limit: int = 3
     return presets.search(kind, query, printer or None, limit)
 
 
-@mcp.tool()
+@tool()
 def filament_colors(preset: str) -> list:
     """Official colors (name, hex) of a Bambu filament line, e.g. 'Bambu PLA Basic @BBL X1C'."""
     return presets.filament_colors(preset)
 
 
 # ---------------------------------------------------------------- project
-@mcp.tool()
+@tool()
 def new_project(name: str, printer: str = "P1S", process: str = "", filaments: list[dict] | None = None) -> dict:
     """Start an empty project. filaments: AMS slots in order, e.g.
     [{"preset": "Bambu PLA Basic", "color": "#000000"}, {"preset": "eSUN PLA+", "color": "#FFFFFF"}].
-    A filament name without '@...' is matched to the printer automatically."""
+    A filament name without '@...' is matched to the printer automatically. The build plate type is the one
+    picked in Bambu Studio for this printer (change it with set_setting('curr_bed_type', ...))."""
     fils = [(f.get("preset") or "Bambu PLA Basic", _color(f.get("color"))) for f in (filaments or [])] or None
     S.project = Project(name, printer, process or None, fils)
+    _use_preferred_bed(S.project)
     S.saved = S.sliced = None
     _watch(None)
     S.dirty = True
     return _short()
 
 
-@mcp.tool()
+@tool()
 def open_project(path: str) -> dict:
     """Open a .3mf saved by Bambu Studio (or downloaded from MakerWorld). The file is never modified:
     save_project writes a new file. Returns the project summary and what could not be carried over."""
@@ -156,19 +181,20 @@ def open_project(path: str) -> dict:
     return P().summary()
 
 
-@mcp.tool()
+@tool()
 def get_project() -> dict:
     """Current project: printer, process, filament slots, plates, objects (id, name, center, size, filaments),
     setting overrides and warnings. If the project was saved in Bambu Studio in the meantime it is re-read first."""
     return _with_note(P().summary())
 
 
-@mcp.tool()
+@tool()
 def set_printer(printer: str, process: str = "", rearrange: bool = True) -> dict:
     """Switch printer (e.g. P1S -> A1M). Filament presets are swapped for the same filaments on the new printer.
     With rearrange, objects are re-placed to fit the new bed (extra plates are added if needed)."""
     pr = P(True)
     old = pr.set_printer(printer, process or None)
+    _use_preferred_bed(pr)
     if rearrange:
         pr.arrange()
     res = _short()
@@ -176,7 +202,7 @@ def set_printer(printer: str, process: str = "", rearrange: bool = True) -> dict
     return res
 
 
-@mcp.tool()
+@tool()
 def set_filament(slot: int, preset: str = "", color: str = "") -> dict:
     """Change one filament slot (1-based); a new slot number = add a slot. Leave a field empty to keep it."""
     pr = P(True)
@@ -193,7 +219,7 @@ def set_filament(slot: int, preset: str = "", color: str = "") -> dict:
 
 
 # ---------------------------------------------------------------- plates
-@mcp.tool()
+@tool()
 def add_plate(name: str = "") -> dict:
     """Add an empty plate at the end."""
     pr = P(True)
@@ -201,14 +227,14 @@ def add_plate(name: str = "") -> dict:
     return {"plate": len(pr.plates), "plates": len(pr.plates)}
 
 
-@mcp.tool()
+@tool()
 def rename_plate(plate: int, name: str) -> dict:
     """Give a plate a name (shown in Bambu Studio)."""
     P(True).plate(plate).name = name
     return {"plate": plate, "name": name}
 
 
-@mcp.tool()
+@tool()
 def remove_plate(plate: int, move_objects_to: int = 0) -> dict:
     """Delete a plate. Its objects are moved to plate `move_objects_to` (0 = delete them too)."""
     pr = P(True)
@@ -246,7 +272,7 @@ def _place(pr, plate, obj, x, y):
     return res
 
 
-@mcp.tool()
+@tool()
 def import_model(path: str, plate: int = 1, x: float | None = None, y: float | None = None, rotate_z: float = 0,
                  scale: float = 1.0, filament: int = 1, name: str = "") -> list:
     """Put an STL, OBJ or 3MF on a plate. Without x/y it goes to the free spot closest to the center.
@@ -274,7 +300,7 @@ def import_model(path: str, plate: int = 1, x: float | None = None, y: float | N
     return out
 
 
-@mcp.tool()
+@tool()
 def add_shape(shape: str, plate: int = 1, x: float | None = None, y: float | None = None, filament: int = 1,
               name: str = "", width: float = 20, depth: float = 20, height: float = 20, diameter: float = 20,
               diameter_top: float = 0, text: str = "", text_height: float = 10, font: str = "",
@@ -302,7 +328,7 @@ def add_shape(shape: str, plate: int = 1, x: float | None = None, y: float | Non
     return _place(pr, plate, Obj(nm, [Part(nm, v, t, filament)]), x, y)
 
 
-@mcp.tool()
+@tool()
 def move_object(object: str, x: float | None = None, y: float | None = None, dx: float = 0, dy: float = 0,
                 rotate_z: float = 0, plate: int = 0) -> dict:
     """Move an object (by name or id): absolute x/y, relative dx/dy, rotate around Z by rotate_z degrees,
@@ -331,7 +357,7 @@ def _overlap(a, b):
     return not (a[2] <= b[0] or a[0] >= b[2] or a[3] <= b[1] or a[1] >= b[3])
 
 
-@mcp.tool()
+@tool()
 def transform_object(object: str, scale: float = 1.0, scale_xyz: list[float] | None = None, rotate_x: float = 0,
                      rotate_y: float = 0, rotate_z: float = 0) -> dict:
     """Scale (uniform or per axis) and rotate an object around its center. It stays on the bed."""
@@ -349,7 +375,7 @@ def transform_object(object: str, scale: float = 1.0, scale_xyz: list[float] | N
     return res
 
 
-@mcp.tool()
+@tool()
 def duplicate_object(object: str, copies: int = 1, plate: int = 0) -> list:
     """Copy an object `copies` times onto free spots (same plate unless `plate` is given)."""
     import copy
@@ -363,7 +389,7 @@ def duplicate_object(object: str, copies: int = 1, plate: int = 0) -> list:
     return out
 
 
-@mcp.tool()
+@tool()
 def delete_object(object: str) -> dict:
     """Remove an object from the project."""
     pr = P(True)
@@ -372,7 +398,7 @@ def delete_object(object: str) -> dict:
     return {"deleted": o.name, "plate": pi + 1}
 
 
-@mcp.tool()
+@tool()
 def set_object_filament(object: str, filament: int, part: str = "") -> dict:
     """Assign a filament slot to a whole object, or to one of its parts (by part name)."""
     pr = P(True)
@@ -387,7 +413,7 @@ def set_object_filament(object: str, filament: int, part: str = "") -> dict:
     return {"name": o.name, "parts": [{"name": p.name, "filament": p.filament} for p in o.parts]}
 
 
-@mcp.tool()
+@tool()
 def set_object_setting(object: str, key: str, value: str) -> dict:
     """Per-object print setting (e.g. sparse_infill_density '40%', wall_loops '4', layer_height '0.12').
     An empty value removes the override."""
@@ -402,14 +428,14 @@ def set_object_setting(object: str, key: str, value: str) -> dict:
     return {"name": o.name, "settings": o.settings}
 
 
-@mcp.tool()
+@tool()
 def check_object(object: str) -> dict:
     """Is the mesh a closed, printable solid? Size, volume, number of separate pieces."""
     _, o = P().find(object)
     return {"name": o.name, "parts": [{"name": p.name, **geometry.check(p.verts, p.tris)} for p in o.parts]}
 
 
-@mcp.tool()
+@tool()
 def arrange(plate: int = 0, gap: float = 6.0) -> dict:
     """Re-place the objects of a plate (0 = all plates) close to the center without overlaps.
     Objects that do not fit are moved to a new plate."""
@@ -422,7 +448,7 @@ def arrange(plate: int = 0, gap: float = 6.0) -> dict:
 
 
 # ---------------------------------------------------------------- settings
-@mcp.tool()
+@tool()
 def get_setting(key: str) -> dict:
     """Current value of a print/filament/printer setting, where it comes from, and the preset value."""
     pr = P()
@@ -434,7 +460,7 @@ def get_setting(key: str) -> dict:
     return {"key": key, "kind": kind, "value": cfg.get(key), "overridden": key in pr.overrides}
 
 
-@mcp.tool()
+@tool()
 def set_setting(key: str, value: str, slot: int = 0) -> dict:
     """Override a project setting. For filament settings (temperatures, plate temperatures...) slot = filament
     slot (0 = all slots). Values are Bambu Studio strings, e.g. '0.16', '15%', '65'. Useful keys:
@@ -463,7 +489,7 @@ def set_setting(key: str, value: str, slot: int = 0) -> dict:
     return {"key": key, "kind": kind, "value": pr.overrides[key], "previous": cur}
 
 
-@mcp.tool()
+@tool()
 def reset_setting(key: str) -> dict:
     """Drop an override: the setting goes back to the preset value."""
     pr = P(True)
@@ -472,7 +498,7 @@ def reset_setting(key: str) -> dict:
 
 
 # ---------------------------------------------------------------- files, slicing, previews
-@mcp.tool()
+@tool()
 def save_project(path: str = "", open_in_bambu: bool = False) -> dict:
     """Write the project as a Bambu Studio .3mf (default folder: the output dir, name from the project).
     Never overwrites: if the file exists a -2, -3... suffix is added. Optionally open it in Bambu Studio."""
@@ -496,7 +522,7 @@ def save_project(path: str = "", open_in_bambu: bool = False) -> dict:
     return res
 
 
-@mcp.tool()
+@tool()
 def open_in_bambu_studio(path: str = "") -> dict:
     """Open a .3mf in the Bambu Studio window: by default the last sliced file (to see the preview there),
     otherwise the last saved one. Bambu Studio may ask what to do with the project already open."""
@@ -506,7 +532,7 @@ def open_in_bambu_studio(path: str = "") -> dict:
     return {"opened": studio.open_in_gui(os.path.expanduser(target))}
 
 
-@mcp.tool()
+@tool()
 def slice_project(plate: int = 0) -> dict:
     """Slice with Bambu Studio (plate 0 = all). Returns per plate: minutes, grams (total and per filament slot),
     filament changes, layers and warnings. The sliced project is saved next to the project file."""
@@ -524,7 +550,7 @@ def slice_project(plate: int = 0) -> dict:
     return {"sliced_file": out, "plates": stats}
 
 
-@mcp.tool()
+@tool()
 def preview_plate(plate: int = 1, view: str = "iso", zoom: bool = False) -> Image:
     """Image of a plate with its objects in their filament colors (painted colors too).
     view: iso | top. zoom: frame the objects instead of the whole bed, to see details."""
@@ -533,7 +559,7 @@ def preview_plate(plate: int = 1, view: str = "iso", zoom: bool = False) -> Imag
     return Image(data=preview.render_plate(pr, plate - 1, "top" if view == "top" else "iso", zoom=zoom), format="png")
 
 
-@mcp.tool()
+@tool()
 def preview_layer(plate: int = 1, layer: int = 0, z: float = 0) -> Image:
     """Image of one sliced layer seen from the top (needs slice_project first). Choose by layer number (1 = first)
     or by height z in mm. Extrusions are drawn in the filament colors."""
@@ -549,7 +575,7 @@ def preview_layer(plate: int = 1, layer: int = 0, z: float = 0) -> Image:
                                            exclude=pr.info["exclude"]), format="png")
 
 
-@mcp.tool()
+@tool()
 def make_first_layer_test(plate: int = 1, height: float = 0.8, objects: list[str] | None = None) -> dict:
     """Add a plate with the first `height` mm of the objects of a plate (or of the listed objects):
     a short print to check bed adhesion and the first layers before a long print. Slice it with
@@ -583,7 +609,7 @@ def make_first_layer_test(plate: int = 1, height: float = 0.8, objects: list[str
             "note": "painted colors are not kept in the test copy"}
 
 
-@mcp.tool()
+@tool()
 def send_to_printer(plate: int = 1, via: str = "auto") -> dict:
     """Prepare the print file of one plate (.gcode.3mf) and hand it to an official Bambu app, where the user
     checks printer and AMS mapping and presses Print/Send. Nothing starts printing by itself.
@@ -593,17 +619,29 @@ def send_to_printer(plate: int = 1, via: str = "auto") -> dict:
     pl = pr.plate(plate)
     if not pl.objects:
         raise ValueError(f"plate {plate} is empty")
+    if via not in ("auto", "bambu_connect", "bambu_studio", "file"):
+        raise ValueError("via must be auto, bambu_connect, bambu_studio or file")
+    used = sorted({f for o in pl.objects for f in o.filaments()})
     tmp = next_free_path(os.path.join(out_dir(), f".{pr.name}-export.3mf"))
-    threemf.write(pr, tmp)
+    # pin the bed type on the plate: Bambu Studio re-applies the user's own bed choice when it opens the file,
+    # and a global bed change throws away the slicing of plates without one (no Print button)
+    pinned = "bed_type" not in pl.settings
+    if pinned:
+        pl.settings["bed_type"] = pr.config().get("curr_bed_type") or "Textured PEI Plate"
+    try:
+        threemf.write(pr, tmp)
+    finally:
+        if pinned:
+            pl.settings.pop("bed_type")
     out = next_free_path(os.path.join(out_dir(), f"{pr.name}-plate{plate}.gcode.3mf"))
     try:
-        st = slicer.export_plate(tmp, plate, out)
+        st = slicer.export_plate(tmp, plate, out, model_id=pr.info.get("model_id"))
     finally:
         if os.path.exists(tmp):
             os.remove(tmp)
-    used = sorted({f for o in pl.objects for f in o.filaments()})
-    res = {"print_file": out, "plate": plate, "printer": pr.machine, "minutes": st.get("minutes"),
-           "grams": st.get("grams"), "warnings": st.get("warnings", []),
+    res = {"print_file": out, "plate": plate, "printer": pr.machine, "build_plate": pl.settings.get("bed_type")
+           or pr.config().get("curr_bed_type"), "minutes": st.get("minutes"), "grams": st.get("grams"),
+           "warnings": st.get("warnings", []),
            "filaments": [{"slot": k, "preset": pr.filaments[k - 1][0], "color": pr.filaments[k - 1][1]}
                          for k in used if k <= len(pr.filaments)]}
     target = via
@@ -625,10 +663,11 @@ def send_to_printer(plate: int = 1, via: str = "auto") -> dict:
     return res
 
 
-@mcp.tool()
+@tool()
 def printer_status() -> dict:
-    """Read-only status of the printer on the local network: state, job, progress, remaining time, layer,
-    temperatures, AMS trays (type, color, remaining %), active slot, errors. Works with the printer in normal
+    """Read-only status of the printer on the local network: state, job, progress, remaining time, layer
+    (or the last job's result when idle), temperatures, AMS trays (type, color, remaining %; 'unknown' = a spool
+    the AMS has not been told about), AMS humidity and temperature, active slot, errors. Works with the printer in normal
     cloud mode (Bambu Handy keeps working). Nothing is sent to the printer except a status request."""
     rep, serial = printer.status()
     out = printer.summarize(rep)
@@ -636,7 +675,7 @@ def printer_status() -> dict:
     return out
 
 
-@mcp.tool()
+@tool()
 def use_ams_filaments(ams_slots: list[int] | None = None) -> dict:
     """Set the project's filament slots from what is loaded in the AMS right now (preset and color), like
     Bambu Studio's 'sync AMS'. Default: every loaded tray in order (project slot 1 = first loaded tray).
@@ -644,13 +683,16 @@ def use_ams_filaments(ams_slots: list[int] | None = None) -> dict:
     pr = P(True)
     rep, _ = printer.status()
     trays = {t["slot"]: t for t in printer.summarize(rep)["ams_trays"]}
-    order = ams_slots or [k for k, t in sorted(trays.items()) if not t.get("empty")]
+    order = ams_slots or [k for k, t in sorted(trays.items()) if t.get("type")]
     if not order:
-        raise ValueError("no filament loaded in the AMS")
+        raise ValueError("no known filament in the AMS")
     new, mapping = [], []
     for k in order:
         t = trays.get(k)
-        if not t or t.get("empty"):
+        if t and t.get("unknown"):
+            raise ValueError(f"AMS slot {k} holds a spool the AMS does not know: set its type and color on the "
+                             "printer, in Bambu Handy or in Bambu Studio, or use set_filament for that slot")
+        if not t or not t.get("type"):
             raise ValueError(f"AMS slot {k} is empty")
         preset = printer.preset_for_tray(t.get("filament_id"), t.get("type"), pr.machine)
         new.append((preset, t.get("color") or "#FFFFFF"))
@@ -659,6 +701,9 @@ def use_ams_filaments(ams_slots: list[int] | None = None) -> dict:
     used = pr.used_filaments()
     pr.filaments = new
     res = {"filaments": mapping}
+    skipped = [k for k, t in sorted(trays.items()) if t.get("unknown")]
+    if skipped and not ams_slots:
+        res["skipped"] = f"AMS slot(s) {skipped} hold a spool the AMS does not know (type not set): left out"
     missing = [f for f in used if f > len(new)]
     if missing:
         res["warning"] = f"objects use slots {missing} that no longer exist: reassign them with set_object_filament"
@@ -673,7 +718,7 @@ def _layers(pr):
     return lh, fh
 
 
-@mcp.tool()
+@tool()
 def add_layer_action(plate: int, z: float, action: str, filament: int = 0, gcode: str = "", message: str = "") -> dict:
     """Do something when the print reaches height z (mm), before that layer is printed:
     action = pause (e.g. to insert magnets or nuts; message is shown in Bambu Studio),
@@ -699,7 +744,7 @@ def add_layer_action(plate: int, z: float, action: str, filament: int = 0, gcode
     return {"plate": plate, "z_requested": z, "z": zz, "layer_actions": [g.as_dict() for g in pl.layer_gcodes]}
 
 
-@mcp.tool()
+@tool()
 def remove_layer_action(plate: int, index: int = 0) -> dict:
     """Remove a layer action (1-based index as listed by get_project), or all of them with index 0."""
     pl = P(True).plate(plate)
@@ -724,7 +769,7 @@ def _calib_plate(pr, name, objs, positions=None):
     return len(pr.plates), pl
 
 
-@mcp.tool()
+@tool()
 def make_temperature_tower(filament: int = 1, start: float = 0, end: float = 0, step: float = 5) -> dict:
     """Add a plate with a temperature tower for a filament slot: one 8 mm block per temperature (hottest at the
     bottom), each with a bridge and its temperature engraved on the front. Defaults: the filament's
@@ -751,7 +796,7 @@ def make_temperature_tower(filament: int = 1, start: float = 0, end: float = 0, 
             "next": f"slice_project(plate={n}) and send it; then set nozzle_temperature for this filament"}
 
 
-@mcp.tool()
+@tool()
 def make_flow_test(filament: int = 1, low: float = -20, high: float = 20, step: float = 5) -> dict:
     """Add a plate of flow-rate squares for a filament slot, each printed with a different flow modifier (percent)
     engraved on top. Pass 1: -20..+20 step 5. Pass 2: around the best one, e.g. low=-4 high=4 step=1.
@@ -775,7 +820,7 @@ def make_flow_test(filament: int = 1, low: float = -20, high: float = 20, step: 
                     f"set_setting('filament_flow_ratio', <resulting value>, slot={filament}) or save_filament_preset"}
 
 
-@mcp.tool()
+@tool()
 def make_pa_tower(filament: int = 1, start: float = 0.0, end: float = 0.06, step: float = 0.004) -> dict:
     """Add a plate with a pressure advance (flow dynamics) tower: a thin square tube printed fast, the K value grows
     by `step` every millimeter. Find the height with the sharpest corners and no gaps: K = start + floor(height) * step.
@@ -793,7 +838,7 @@ def make_pa_tower(filament: int = 1, start: float = 0.0, end: float = 0.06, step
             "next": f"slice_project(plate={n}); in the send dialog untick 'Flow Dynamics Calibration'"}
 
 
-@mcp.tool()
+@tool()
 def save_filament_preset(slot: int, name: str) -> dict:
     """Save the filament of a slot, with this project's changes for that slot (temperatures, flow ratio, plate
     temperatures...), as a new Bambu Studio user preset. It appears in Bambu Studio after a restart and can be
@@ -819,7 +864,7 @@ def save_filament_preset(slot: int, name: str) -> dict:
 
 
 # ---------------------------------------------------------------- Bambu Studio sync
-@mcp.tool()
+@tool()
 def sync_with_bambu_studio(force: bool = False) -> dict:
     """Re-read the project file after you changed it by hand in Bambu Studio and saved (same file).
     This also happens automatically on the next command when there are no unsaved changes here;
@@ -840,7 +885,7 @@ def sync_with_bambu_studio(force: bool = False) -> dict:
 
 
 # ---------------------------------------------------------------- mirror, lay flat, cut
-@mcp.tool()
+@tool()
 def mirror_object(object: str, axis: str = "x") -> dict:
     """Mirror an object across its own center (axis x, y or z)."""
     pr = P(True)
@@ -860,7 +905,7 @@ def mirror_object(object: str, axis: str = "x") -> dict:
     return res
 
 
-@mcp.tool()
+@tool()
 def lay_flat(object: str, face: int = 1) -> dict:
     """Rotate an object so one of its flat faces lies on the bed: face 1 = the biggest flat face,
     2 = the second biggest, and so on."""
@@ -875,7 +920,7 @@ def lay_flat(object: str, face: int = 1) -> dict:
     return res
 
 
-@mcp.tool()
+@tool()
 def cut_object(object: str, z: float, keep: str = "both", flip_top: bool = True) -> dict:
     """Cut an object horizontally at height z (mm from its bottom). keep: both | bottom | top. With flip_top the top
     piece is turned upside down so it prints on the flat cut face. Modifiers and painted colors are not kept."""
@@ -910,7 +955,7 @@ SUBTYPES = {"modifier": "modifier_part", "negative": "negative_part", "support_b
             "support_enforcer": "support_enforcer"}
 
 
-@mcp.tool()
+@tool()
 def add_modifier(object: str, settings: dict[str, str] | None = None, kind: str = "modifier", z_from: float = 0,
                  z_to: float = 0, region: list[float] | None = None) -> dict:
     """Add a box-shaped part to an object, covering its whole footprint between z_from and z_to (mm from the
@@ -946,7 +991,7 @@ def add_modifier(object: str, settings: dict[str, str] | None = None, kind: str 
                                                      for p in o.parts]}
 
 
-@mcp.tool()
+@tool()
 def remove_part(object: str, part: str) -> dict:
     """Remove a part (e.g. a modifier) from an object, by part name. The last solid part cannot be removed."""
     pr = P(True)
@@ -989,7 +1034,7 @@ def _standalone(name, slot, objs, overrides, positions=None):
             "warnings": stats["warnings"]}
 
 
-@mcp.tool()
+@tool()
 def make_max_flow_test(filament: int = 1, low: float = 0, high: float = 0, step: float = 2) -> dict:
     """Max volumetric speed test for a filament slot, as a separate project file (the open project is not changed):
     single-wall cylinders, each printed at the wall speed that gives the volumetric speed Q (mm³/s) on its tag.
@@ -1023,7 +1068,7 @@ def make_max_flow_test(filament: int = 1, low: float = 0, high: float = 0, step:
     return res
 
 
-@mcp.tool()
+@tool()
 def make_retraction_test(filament: int = 1, lengths: list[float] | None = None) -> dict:
     """Stringing test for a filament slot: one small separate project per retraction length (Bambu printers cannot
     change retraction during a print). Print them one after the other and keep the shortest length without strings

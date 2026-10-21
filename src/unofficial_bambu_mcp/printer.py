@@ -27,22 +27,12 @@ class PrinterError(RuntimeError):
 
 
 # ---------------------------------------------------------------- credentials and address
-def _conf():
-    p = os.path.join(studio.data_dir(), "BambuStudio.conf")
-    try:
-        with open(p, encoding="utf-8") as f:
-            txt = f.read()
-        return json.loads(txt[txt.find("{"):])
-    except (OSError, ValueError):
-        return {}
-
-
 def credentials(serial=None):
     """(serial, access_code) of the printer: env vars first, then Bambu Studio's saved LAN access codes."""
     env_s, env_c = os.environ.get("BAMBU_PRINTER_SERIAL"), os.environ.get("BAMBU_PRINTER_ACCESS_CODE")
     if env_s and env_c and (not serial or serial == env_s):
         return env_s, env_c
-    conf = _conf()
+    conf = studio.app_config()
     codes = {**conf.get("access_code", {}), **conf.get("user_access_code", {})}
     if not codes:
         raise PrinterError("no LAN access code found: connect the printer once in Bambu Studio, "
@@ -292,26 +282,42 @@ def _num(x, nd=0):
         return None
 
 
+def _bits(x):
+    try:
+        return int(x, 16)
+    except (TypeError, ValueError):
+        return None
+
+
 def summarize(r):
     """Human-sized status from a raw report."""
-    out = {
-        "state": STATES.get(r.get("gcode_state"), r.get("gcode_state")),
-        "job": r.get("subtask_name") or r.get("gcode_file") or None,
-        "progress_percent": _num(r.get("mc_percent")),
-        "remaining_minutes": _num(r.get("mc_remaining_time")),
-        "layer": [_num(r.get("layer_num")), _num(r.get("total_layer_num"))],
+    state = r.get("gcode_state")
+    job = r.get("subtask_name") or r.get("gcode_file") or None
+    # after a job the printer keeps reporting it (FINISH / FAILED, also on cancel) while it sits idle
+    out = {"state": "idle" if state in ("FINISH", "FAILED") else STATES.get(state, state)}
+    if state in ("RUNNING", "PAUSE", "PREPARE", "SLICING"):
+        out.update({
+            "job": job,
+            "progress_percent": _num(r.get("mc_percent")),
+            "remaining_minutes": _num(r.get("mc_remaining_time")),
+            "layer": [_num(r.get("layer_num")), _num(r.get("total_layer_num"))],
+        })
+    elif state in ("FINISH", "FAILED") and job:
+        out["last_job"] = {"name": job, "result": "finished" if state == "FINISH" else "failed or cancelled"}
+    out.update({
         "nozzle_c": [_num(r.get("nozzle_temper"), 1), _num(r.get("nozzle_target_temper"), 1)],
         "bed_c": [_num(r.get("bed_temper"), 1), _num(r.get("bed_target_temper"), 1)],
         "speed_level": {1: "silent", 2: "standard", 3: "sport", 4: "ludicrous"}.get(_num(r.get("spd_lvl"))),
         "wifi_signal": r.get("wifi_signal"),
         "errors": [],
-    }
+    })
     if r.get("print_error"):
         out["errors"].append({"print_error": r.get("print_error")})
     for h in r.get("hms", []) or []:
         out["errors"].append({"hms": f"{int(h.get('attr', 0)):08X}_{int(h.get('code', 0)):08X}"})
     ams = r.get("ams") or {}
-    trays = []
+    exist = _bits(ams.get("tray_exist_bits"))       # bit n = a spool sits in global tray n
+    trays, unknown = [], []
     for unit in ams.get("ams", []) or []:
         u = int(unit.get("id", 0))
         for t in unit.get("tray", []) or []:
@@ -321,12 +327,25 @@ def summarize(r):
                 entry.update({"type": t.get("tray_type"), "name": t.get("tray_sub_brands") or t.get("tray_type"),
                               "color": _color(t.get("tray_color")), "remain_percent": _num(t.get("remain")),
                               "filament_id": t.get("tray_info_idx")})
+            elif exist is not None and (exist >> (u * 4 + k)) & 1:
+                entry["unknown"] = True               # a spool without RFID that nobody has set in the AMS
+                unknown.append(entry["slot"])
             else:
                 entry["empty"] = True
             trays.append(entry)
-        if unit.get("humidity") is not None:
-            out.setdefault("ams_humidity", {})[u + 1] = unit.get("humidity")
+        info = {}
+        if unit.get("humidity_raw") is not None:
+            info["humidity_percent"] = _num(unit.get("humidity_raw"))
+        elif unit.get("humidity") is not None:
+            info["humidity_level"] = unit.get("humidity")     # older firmware: only the AMS's 1..5 index
+        if unit.get("temp") is not None:
+            info["temp_c"] = _num(unit.get("temp"), 1)
+        if info:
+            out.setdefault("ams_units", {})[u + 1] = info
     out["ams_trays"] = trays
+    if unknown:
+        out["hint"] = (f"AMS slot(s) {unknown} hold a spool the AMS does not know (no RFID, type not set): "
+                       "set type and color on the printer screen, in Bambu Handy or in Bambu Studio")
     vt = r.get("vt_tray") or {}
     if vt.get("tray_type"):
         out["external_spool"] = {"type": vt.get("tray_type"), "name": vt.get("tray_sub_brands") or vt.get("tray_type"),

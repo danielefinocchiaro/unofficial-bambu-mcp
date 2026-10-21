@@ -321,7 +321,7 @@ class Project:
         info = self.info
         out = {
             "name": self.name, "printer": self.machine, "process": self.process,
-            "bed_mm": list(info["bed"]), "source_file": self.source_path,
+            "bed_mm": list(info["bed"]), "build_plate": self.config().get("curr_bed_type"), "source_file": self.source_path,
             "filaments": [{"slot": i + 1, "preset": n, "color": c} for i, (n, c) in enumerate(self.filaments)],
             "overrides": self.overrides, "plates": [], "warnings": self.warnings,
         }
@@ -366,10 +366,12 @@ def flush_volume(c_from, c_to):
 
 
 def next_free_path(path):
-    """Never overwrite: name.3mf -> name-2.3mf -> name-3.3mf ..."""
+    """Never overwrite: name.3mf -> name-2.3mf -> name-3.3mf ... (name.gcode.3mf -> name-2.gcode.3mf)"""
     if not os.path.exists(path):
         return path
     base, ext = os.path.splitext(path)
+    if base.lower().endswith(".gcode"):          # keep the double extension Bambu apps look for
+        base, ext = base[:-6], base[-6:] + ext
     k = 2
     while os.path.exists(f"{base}-{k}{ext}"):
         k += 1

@@ -34,7 +34,8 @@ Official colors (name, hex) of a Bambu filament line, e.g. 'Bambu PLA Basic @BBL
 
 Start an empty project. filaments: AMS slots in order, e.g.
 [{"preset": "Bambu PLA Basic", "color": "#000000"}, {"preset": "eSUN PLA+", "color": "#FFFFFF"}].
-A filament name without '@...' is matched to the printer automatically.
+A filament name without '@...' is matched to the printer automatically. The build plate type is the one
+picked in Bambu Studio for this printer (change it with set_setting('curr_bed_type', ...)).
 
 | Parameter | Type | Default |
 |---|---|---|
@@ -336,8 +337,9 @@ Tell the user what to press, and the time, weight and filaments of the plate.
 
 ## `printer_status`
 
-Read-only status of the printer on the local network: state, job, progress, remaining time, layer,
-temperatures, AMS trays (type, color, remaining %), active slot, errors. Works with the printer in normal
+Read-only status of the printer on the local network: state, job, progress, remaining time, layer
+(or the last job's result when idle), temperatures, AMS trays (type, color, remaining %; 'unknown' = a spool
+the AMS has not been told about), AMS humidity and temperature, active slot, errors. Works with the printer in normal
 cloud mode (Bambu Handy keeps working). Nothing is sent to the printer except a status request.
 
 ## `use_ams_filaments`

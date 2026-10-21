@@ -134,7 +134,21 @@ def layer_paths(gtext, layer=None, z=None):
         x, y = nx, ny
     return segs, k + 1, layers[k][1] or 0.0, len(layers)
 
-def export_plate(path, plate, out_path, timeout=1800):
+def _set_printer_model_id(path, model_id):
+    """The command line leaves printer_model_id empty in slice_info.config; the printer and Bambu apps use it
+    to tell whether a print file fits the printer (e.g. when printing it again from the printer's storage)."""
+    tmp = path + ".part"
+    with zipfile.ZipFile(path) as zin, zipfile.ZipFile(tmp, "w") as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == "Metadata/slice_info.config":
+                data = data.replace(b'key="printer_model_id" value=""',
+                                    f'key="printer_model_id" value="{model_id}"'.encode())
+            zout.writestr(item, data)
+    os.replace(tmp, path)
+
+
+def export_plate(path, plate, out_path, timeout=1800, model_id=None):
     """Print file for one plate (.gcode.3mf: G-code, md5, thumbnails, slice info), the format Bambu Studio,
     Bambu Connect and the printer accept. Returns the plate stats."""
     exe = studio.executable()
@@ -148,6 +162,8 @@ def export_plate(path, plate, out_path, timeout=1800):
         if r.returncode != 0 or not os.path.exists(out):
             tail = "\n".join((r.stdout + r.stderr).splitlines()[-15:])
             raise SliceError(f"export failed for plate {plate}\n{tail}")
+        if model_id:
+            _set_printer_model_id(out, model_id)
         shutil.move(out, out_path)
     finally:
         shutil.rmtree(work, ignore_errors=True)

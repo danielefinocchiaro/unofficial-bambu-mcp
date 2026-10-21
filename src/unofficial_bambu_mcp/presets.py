@@ -136,7 +136,16 @@ def machine_info(machine):
         "default_filament": (m.get("default_filament_profile") or [None])[0],
         "nozzle": (m.get("nozzle_diameter") or ["0.4"])[0],
         "extruders": len(m.get("nozzle_diameter") or ["0.4"]),
+        "model_id": _model_id(m.get("printer_model")),
     }
+
+
+def _model_id(printer_model):
+    """Bambu's printer model code (e.g. 'C12' for the P1S), from the vendor's model file."""
+    try:
+        return flat("machine", printer_model).get("model_id") if printer_model else None
+    except PresetError:
+        return None
 
 
 def _compatible(fl, machine):

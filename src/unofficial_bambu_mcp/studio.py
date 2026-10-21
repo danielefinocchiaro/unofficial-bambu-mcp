@@ -46,6 +46,32 @@ def data_dir():
     return os.path.expanduser("~/.config/BambuStudio")
 
 
+def app_config():
+    """Bambu Studio's own settings (BambuStudio.conf) as a dict, {} if missing or unreadable."""
+    try:
+        with open(os.path.join(data_dir(), "BambuStudio.conf"), encoding="utf-8") as f:
+            txt = f.read()
+        return json.loads(txt[txt.find("{"):])
+    except (OSError, ValueError):
+        return {}
+
+
+BED_TYPES = ["Cool Plate", "Engineering Plate", "High Temp Plate", "Textured PEI Plate", "Supertack Plate"]
+
+
+def preferred_bed_type(machine):
+    """The plate the user picked in Bambu Studio for this printer preset, else the last one used there."""
+    conf = app_config()
+    bed = (conf.get("user_bed_type_list") or {}).get(machine)
+    if bed in BED_TYPES:
+        return bed
+    try:
+        i = int(conf.get("app", {}).get("curr_bed_type", 0))      # Bambu's BedType: 1 = Cool Plate ...
+    except (TypeError, ValueError):
+        i = 0
+    return BED_TYPES[i - 1] if 1 <= i <= len(BED_TYPES) else None
+
+
 def resources_dir():
     exe = executable()
     if not exe:

@@ -56,6 +56,9 @@ def test_next_free_path(tmp_path):
     assert next_free_path(str(p)) == str(p)
     p.write_text("x")
     assert next_free_path(str(p)).endswith("a-2.3mf")
+    g = tmp_path / "a-plate1.gcode.3mf"
+    g.write_text("x")
+    assert next_free_path(str(g)).endswith("a-plate1-2.gcode.3mf")
 
 
 @needs_bambu
@@ -92,6 +95,22 @@ def test_printer_summary():
     assert s["state"] == "printing" and s["progress_percent"] == 42 and s["layer"] == [9, 20]
     assert s["ams_trays"][1]["color"] == "#FFFFFF" and s["ams_trays"][2]["empty"]
     assert s["active_slot"] == 2
+
+
+def test_printer_summary_idle_and_unknown_spool():
+    from unofficial_bambu_mcp import printer
+    # shape of a real P1S report: last print cancelled, a third-party spool in tray 2 never set in the AMS
+    rep = {"gcode_state": "FAILED", "subtask_name": "50% Scale", "mc_percent": 0, "mc_remaining_time": 39,
+           "print_error": 0, "ams": {"tray_now": "1", "tray_exist_bits": "7", "ams": [
+               {"id": "0", "humidity": "1", "humidity_raw": "60", "temp": "25.7", "tray": [
+                   {"id": "0", "tray_type": "PETG", "tray_color": "00AE42FF", "remain": 84, "tray_info_idx": "GFG02"},
+                   {"id": "1"}, {"id": "2"}, {"id": "3"}]}]}}
+    s = printer.summarize(rep)
+    assert s["state"] == "idle" and "progress_percent" not in s
+    assert s["last_job"] == {"name": "50% Scale", "result": "failed or cancelled"}
+    assert s["ams_trays"][1]["unknown"] and s["ams_trays"][2]["unknown"] and s["ams_trays"][3]["empty"]
+    assert s["ams_units"] == {1: {"humidity_percent": 60, "temp_c": 25.7}}
+    assert "[2, 3]" in s["hint"] and s["active_slot"] == 2
 
 
 @needs_bambu
@@ -176,3 +195,28 @@ def test_modifier_roundtrip(tmp_path):
     mod = [p for p in back.parts if p.subtype == "modifier_part"][0]
     assert mod.meta["sparse_infill_density"] == "100%"
     assert back.size()[2] == pytest.approx(10, abs=1e-3)       # modifiers do not change the object's size
+
+
+def test_preferred_bed_type(tmp_path, monkeypatch):
+    import json
+
+    from unofficial_bambu_mcp import studio
+    monkeypatch.setenv("BAMBU_STUDIO_DATA", str(tmp_path))
+    assert studio.preferred_bed_type("Bambu Lab P1S 0.4 nozzle") is None
+    conf = {"app": {"curr_bed_type": "4"}, "user_bed_type_list": {"Bambu Lab P1S 0.4 nozzle": "High Temp Plate"}}
+    (tmp_path / "BambuStudio.conf").write_text("# header\n" + json.dumps(conf))
+    assert studio.preferred_bed_type("Bambu Lab P1S 0.4 nozzle") == "High Temp Plate"
+    assert studio.preferred_bed_type("Bambu Lab A1 mini 0.4 nozzle") == "Textured PEI Plate"
+
+
+def test_set_printer_model_id(tmp_path):
+    import zipfile
+
+    from unofficial_bambu_mcp import slicer
+    p = tmp_path / "a.gcode.3mf"
+    with zipfile.ZipFile(p, "w") as z:
+        z.writestr("Metadata/slice_info.config", '<metadata key="printer_model_id" value=""/>')
+        z.writestr("Metadata/plate_1.gcode", "G28")
+    slicer._set_printer_model_id(str(p), "C12")
+    with zipfile.ZipFile(p) as z:
+        assert b'value="C12"' in z.read("Metadata/slice_info.config") and z.read("Metadata/plate_1.gcode") == b"G28"
