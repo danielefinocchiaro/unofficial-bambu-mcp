@@ -31,6 +31,55 @@ def _view(points, view):
     return np.column_stack([u, v, d])
 
 
+def _rasterize(px, z, rgb, W, H, budget=2_000_000):
+    """Z-buffer: for each pixel the color of the nearest triangle (larger z = nearer). Sorting triangles by
+    their center (painter's algorithm) fails where big faces lie under small ones: text on a tag, parts.
+    px: (n, 3, 2) pixel coordinates, z: (n, 3) depths, rgb: (n, 3). Returns (covered mask, colors), flat."""
+    zbuf = np.full(W * H, -np.inf)
+    cbuf = np.zeros((W * H, 3), np.uint8)
+    (x0, y0), (x1, y1), (x2, y2) = px[:, 0].T, px[:, 1].T, px[:, 2].T
+    a2 = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)
+    ok = np.abs(a2) > 1e-9
+    lo = np.clip(np.floor(px.min(1)), 0, [W - 1, H - 1]).astype(np.int64)
+    hi = np.clip(np.ceil(px.max(1)), 0, [W - 1, H - 1]).astype(np.int64)
+    ok &= (px[:, :, 0].max(1) >= 0) & (px[:, :, 0].min(1) < W) & (px[:, :, 1].max(1) >= 0) & (px[:, :, 1].min(1) < H)
+    a2 = np.where(ok, a2, 1.0)
+    # barycentric weights as planes in pixel space: w0 = A0 x + B0 y + C0, w1 likewise, w2 = 1 - w0 - w1
+    A0, B0, C0 = (y1 - y2) / a2, (x2 - x1) / a2, (x1 * y2 - x2 * y1) / a2
+    A1, B1, C1 = (y2 - y0) / a2, (x0 - x2) / a2, (x2 * y0 - x0 * y2) / a2
+    dz0, dz1 = z[:, 0] - z[:, 2], z[:, 1] - z[:, 2]
+    Dz, Ez, Fz = A0 * dz0 + A1 * dz1, B0 * dz0 + B1 * dz1, z[:, 2] + C0 * dz0 + C1 * dz1
+    tris = np.nonzero(ok)[0]
+    w = hi[tris, 0] - lo[tris, 0] + 1
+    n = w * (hi[tris, 1] - lo[tris, 1] + 1)
+    ends = np.cumsum(n)
+    i = 0
+    while i < len(tris):
+        j = max(i + 1, int(np.searchsorted(ends, (ends[i - 1] if i else 0) + budget, "right")))
+        cnt = n[i:j]
+        t = np.repeat(tris[i:j], cnt)
+        off = np.arange(cnt.sum()) - np.repeat(np.cumsum(cnt) - cnt, cnt)
+        ww = np.repeat(w[i:j], cnt)
+        xs = lo[t, 0] + off % ww
+        ys = lo[t, 1] + off // ww
+        cx, cy = xs + 0.5, ys + 0.5
+        b0 = A0[t] * cx + B0[t] * cy + C0[t]
+        b1 = A1[t] * cx + B1[t] * cy + C1[t]
+        inside = (b0 >= -1e-6) & (b1 >= -1e-6) & (b0 + b1 <= 1 + 1e-6)
+        pix = (ys * W + xs)[inside]
+        d = (Dz[t] * cx + Ez[t] * cy + Fz[t])[inside]
+        t = t[inside]
+        order = np.lexsort((d, pix))                    # by pixel, then depth: the last of each pixel is nearest
+        pix, d, t = pix[order], d[order], t[order]
+        last = np.r_[pix[1:] != pix[:-1], True]
+        pix, d, t = pix[last], d[last], t[last]
+        near = d > zbuf[pix]
+        zbuf[pix[near]] = d[near]
+        cbuf[pix[near]] = rgb[t[near]]
+        i = j
+    return np.isfinite(zbuf), cbuf
+
+
 def render_plate(project, plate_index, view="iso", size=900, label=True, zoom=False):
     """PNG bytes of one plate (0-based index) with its objects in their filament colors.
     zoom: frame the objects instead of the whole bed."""
@@ -116,16 +165,12 @@ def render_plate(project, plate_index, view="iso", size=900, label=True, zoom=Fa
         F, C, shade = F[front], C[front], shade[front]
         P = _view(F.reshape(-1, 3), view).reshape(-1, 3, 3)
         px = to_px(P.reshape(-1, 3)[:, :2]).reshape(-1, 3, 2)
-        area = 0.5 * np.abs((px[:, 1, 0] - px[:, 0, 0]) * (px[:, 2, 1] - px[:, 0, 1])
-                            - (px[:, 2, 0] - px[:, 0, 0]) * (px[:, 1, 1] - px[:, 0, 1]))
-        depth = P[:, :, 2].mean(1)
-        order = np.argsort(depth)
         base = np.maximum(C, 58.0)                     # very dark filaments: keep the shading readable
-        rgb = np.clip(base * shade[:, None], 0, 255).astype(int)
-        for i in order:
-            if area[i] < 0.05:
-                continue
-            dr.polygon([tuple(px[i, 0]), tuple(px[i, 1]), tuple(px[i, 2])], fill=tuple(rgb[i]))
+        rgb = np.clip(base * shade[:, None], 0, 255).astype(np.uint8)
+        covered, colors = _rasterize(px, P[:, :, 2], rgb, W, H)
+        arr = np.asarray(img).reshape(-1, 3).copy()
+        arr[covered] = colors[covered]
+        img = Image.fromarray(arr.reshape(H, W, 3))
     img = img.resize((size, size), Image.LANCZOS)
     if label:
         d2 = ImageDraw.Draw(img)
@@ -155,14 +200,20 @@ def _paint_slot(s):
     return state or None
 
 
-def render_layer(segs, bed, colors, title="", size=900, exclude=None):
-    """PNG bytes: one sliced layer seen from the top, extrusions colored by filament."""
+def render_layer(segs, bed, colors, title="", size=900, exclude=None, zoom=False):
+    """PNG bytes: one sliced layer seen from the top, extrusions colored by filament.
+    zoom: frame the extrusions instead of the whole bed."""
     bw, bd = bed
     S = 2
     W = H = size * S
     m = 0.05
-    sc = min(W * (1 - 2 * m) / bw, H * (1 - 2 * m) / bd)
-    ox, oy = (W - sc * bw) / 2, (H + sc * bd) / 2
+    x0, y0, x1, y1 = 0.0, 0.0, bw, bd
+    if zoom and segs:
+        a = np.array([s[:4] for s in segs], float)
+        x0, x1 = min(a[:, 0].min(), a[:, 2].min()) - 3, max(a[:, 0].max(), a[:, 2].max()) + 3
+        y0, y1 = min(a[:, 1].min(), a[:, 3].min()) - 3, max(a[:, 1].max(), a[:, 3].max()) + 3
+    sc = min(W * (1 - 2 * m) / (x1 - x0), H * (1 - 2 * m) / (y1 - y0))
+    ox, oy = W / 2 - sc * (x0 + x1) / 2, H / 2 + sc * (y0 + y1) / 2
     img = Image.new("RGB", (W, H), BG)
     dr = ImageDraw.Draw(img)
     dr.rectangle([ox, oy - sc * bd, ox + sc * bw, oy], fill=BED)

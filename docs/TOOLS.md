@@ -125,7 +125,8 @@ From a 3MF every object is imported (with its parts and filament assignments).
 
 Create a simple solid: box (width, depth, height), cylinder (diameter, height), cone (diameter,
 diameter_top, height), sphere (diameter), text (text, text_height = capital letters in mm, height = depth
-of the letters; base > 0 puts the text on a plate that thick; font = path to a .ttf/.otf).
+of the letters; base > 0 puts the text on a plate that thick, as a separate part 'Base' with filament
+base_filament (0 = same as the text), e.g. white letters on a black tag; font = path to a .ttf/.otf).
 
 | Parameter | Type | Default |
 |---|---|---|
@@ -144,6 +145,7 @@ of the letters; base > 0 puts the text on a plate that thick; font = path to a .
 | `text_height` | number | `10` |
 | `font` | string | `''` |
 | `base` | number | `0` |
+| `base_filament` | integer | `0` |
 
 ## `move_object`
 
@@ -303,13 +305,15 @@ view: iso | top. zoom: frame the objects instead of the whole bed, to see detail
 ## `preview_layer`
 
 Image of one sliced layer seen from the top (needs slice_project first). Choose by layer number (1 = first)
-or by height z in mm. Extrusions are drawn in the filament colors.
+or by height z in mm. Extrusions are drawn in the filament colors. zoom: frame the extrusions (default),
+or False for the whole bed.
 
 | Parameter | Type | Default |
 |---|---|---|
 | `plate` | integer | `1` |
 | `layer` | integer | `0` |
 | `z` | number | `0` |
+| `zoom` | boolean | `True` |
 
 ## `make_first_layer_test`
 

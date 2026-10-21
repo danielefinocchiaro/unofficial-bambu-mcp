@@ -279,6 +279,14 @@ def text_solid(s, height=10.0, depth=2.0, font=None, base=0.0, margin=3.0, spaci
     return from_manifold(m)
 
 
+def text_parts(s, height=10.0, depth=2.0, font=None, base=1.0, margin=3.0, spacing=0.0):
+    """Raised text on a rounded plate as two separate solids, so each can get its own filament:
+    [("Base", verts, tris), ("Text", verts, tris)]; the letters stand on top of the plate."""
+    shape = text_outline(s, height, font, spacing)
+    plate = shape.envelope.buffer(margin, join_style=1)
+    return [("Base", *extrude(plate, base)), ("Text", *extrude(shape, depth, base))]
+
+
 def crop_height(verts, tris, z_max):
     """Keep only the part of a closed solid below z_max (first-layers test prints)."""
     _need_manifold()

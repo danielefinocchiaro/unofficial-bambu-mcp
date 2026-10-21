@@ -150,8 +150,15 @@ def open_in_gui(path):
     path = os.path.abspath(path)
     if SYSTEM == "Darwin":
         app = executable()
-        bundle = app.split("/Contents/")[0] if app and "/Contents/" in app else "BambuStudio"
-        subprocess.Popen(["open", "-a", bundle, path])
+        running = subprocess.run(["pgrep", "-f", "Contents/MacOS/BambuStudio"], capture_output=True).returncode == 0
+        if app and not running:
+            # cold start: run the program with the file, as Bambu Studio does for a new window itself; handing
+            # the file over with `open -a` while the app starts can leave it running without any window
+            subprocess.Popen([app, path], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
+        else:
+            bundle = app.split("/Contents/")[0] if app and "/Contents/" in app else "BambuStudio"
+            subprocess.Popen(["open", "-a", bundle, path])
     elif SYSTEM == "Windows":
         subprocess.Popen([executable() or "bambu-studio.exe", path])
     else:

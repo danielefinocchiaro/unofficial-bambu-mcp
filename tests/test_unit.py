@@ -39,6 +39,24 @@ def test_text_solid():
     v, t = geometry.text_solid("AB", height=10, depth=2, base=1.5)
     info = geometry.check(v, t)
     assert info["manifold"] and info["size_mm"][2] == pytest.approx(3.5, abs=0.02)
+    (bn, bv, bt), (tn, tv, tt) = geometry.text_parts("AB", height=10, depth=2, base=1.5)
+    assert (bn, tn) == ("Base", "Text")
+    assert geometry.check(bv, bt)["manifold"] and geometry.check(tv, tt)["manifold"]
+    assert bv[:, 2].max() == pytest.approx(1.5) and tv[:, 2].min() == pytest.approx(1.5)
+    assert tv[:, 2].max() == pytest.approx(3.5)
+
+
+def test_rasterize_nearest_wins():
+    # a big far triangle drawn after a small near one must not cover it (painter's sorting by center failed here)
+    small = [[40, 40], [60, 40], [50, 60]]
+    big = [[0, 0], [100, 0], [0, 100]]
+    for order in ([small, big], [big, small]):
+        px = np.array(order, float)
+        z = np.array([[5.0] * 3 if t is small else [1.0] * 3 for t in order])
+        rgb = np.array([[255, 0, 0] if t is small else [0, 0, 255] for t in order], np.uint8)
+        covered, colors = preview._rasterize(px, z, rgb, 100, 100)
+        assert covered[45 * 100 + 50] and tuple(colors[45 * 100 + 50]) == (255, 0, 0)
+        assert tuple(colors[10 * 100 + 10]) == (0, 0, 255) and not covered[99 * 100 + 99]
 
 
 @pytest.mark.parametrize("code,slot", [("4", 1), ("8", 2), ("0C", 3), ("1C", 4), ("2C", 5), ("5", None), ("", None)])
@@ -220,3 +238,31 @@ def test_set_printer_model_id(tmp_path):
     slicer._set_printer_model_id(str(p), "C12")
     with zipfile.ZipFile(p) as z:
         assert b'value="C12"' in z.read("Metadata/slice_info.config") and z.read("Metadata/plate_1.gcode") == b"G28"
+
+
+@needs_bambu
+def test_object_ids_are_stable(tmp_path, monkeypatch):
+    monkeypatch.setenv("UBMCP_DIR", str(tmp_path))
+    from unofficial_bambu_mcp import server as s
+    s.new_project("ids", "P1S")
+    a = s.add_shape("box", name="A")["id"]
+    b = s.add_shape("box", name="B")["id"]
+    s.add_plate()
+    s.move_object("A", plate=2)                     # A is now listed after B: its id must not change
+    assert s.P().find(a)[1].name == "A" and s.P().find(b)[1].name == "B"
+    c = s.duplicate_object("B")[0]["id"]
+    assert c not in (a, b) and s.P().find(b)[1].name == "B"
+    s.delete_object("B 2")
+    assert s.add_shape("box", name="D")["id"] not in (a, b, c)     # ids are never reused
+
+
+@needs_bambu
+def test_plate_temperature_for_another_plate_warns(tmp_path, monkeypatch):
+    monkeypatch.setenv("UBMCP_DIR", str(tmp_path))
+    from unofficial_bambu_mcp import server as s
+    s.new_project("bed", "P1S")
+    s.set_setting("curr_bed_type", "High Temp Plate")
+    assert "hot_plate_temp" in s.set_setting("textured_plate_temp_initial_layer", "65")["warning"]
+    assert "warning" not in s.set_setting("hot_plate_temp_initial_layer", "65")
+    s.set_setting("curr_bed_type", "Textured PEI Plate")
+    assert "warning" not in s.set_setting("textured_plate_temp", "60")

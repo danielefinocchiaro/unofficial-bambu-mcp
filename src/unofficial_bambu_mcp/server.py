@@ -265,7 +265,8 @@ def _place(pr, plate, obj, x, y):
     else:
         obj.at = (float(x), float(y))
     pl.objects.append(obj)
-    res = {"id": [o for _, o in pr.objects()].index(obj) + 1, "name": obj.name, "plate": plate,
+    pr.objects()                                      # gives the new object its id
+    res = {"id": obj.uid, "name": obj.name, "plate": plate,
            "center_xy": [round(float(obj.at[0]), 1), round(float(obj.at[1]), 1)], "size_mm": [round(float(v), 1) for v in obj.size()]}
     if pr.out_of_bed(obj):
         res["warning"] = "the object is (partly) outside the printable area"
@@ -304,12 +305,23 @@ def import_model(path: str, plate: int = 1, x: float | None = None, y: float | N
 def add_shape(shape: str, plate: int = 1, x: float | None = None, y: float | None = None, filament: int = 1,
               name: str = "", width: float = 20, depth: float = 20, height: float = 20, diameter: float = 20,
               diameter_top: float = 0, text: str = "", text_height: float = 10, font: str = "",
-              base: float = 0) -> dict:
+              base: float = 0, base_filament: int = 0) -> dict:
     """Create a simple solid: box (width, depth, height), cylinder (diameter, height), cone (diameter,
     diameter_top, height), sphere (diameter), text (text, text_height = capital letters in mm, height = depth
-    of the letters; base > 0 puts the text on a plate that thick; font = path to a .ttf/.otf)."""
+    of the letters; base > 0 puts the text on a plate that thick, as a separate part 'Base' with filament
+    base_filament (0 = same as the text), e.g. white letters on a black tag; font = path to a .ttf/.otf)."""
     pr = P(True)
+    for f in (filament, base_filament or filament):
+        if not 1 <= f <= len(pr.filaments):
+            raise ValueError(f"filament slot must be 1..{len(pr.filaments)} (add slots with set_filament)")
     shape = shape.lower().strip()
+    if shape == "text" and base > 0:
+        if not text:
+            raise ValueError("text is empty")
+        nm = pr.unique_name(name or text[:20])
+        parts = [Part(pn, v, t, (base_filament or filament) if pn == "Base" else filament)
+                 for pn, v, t in geometry.text_parts(text, text_height, height, font or None, base)]
+        return _place(pr, plate, Obj(nm, parts), x, y)
     if shape == "box":
         v, t = geometry.box(width, depth, height)
     elif shape == "cylinder":
@@ -384,6 +396,7 @@ def duplicate_object(object: str, copies: int = 1, plate: int = 0) -> list:
     out = []
     for _ in range(max(1, copies)):
         c = copy.deepcopy(o)
+        c.uid = None
         c.name = pr.unique_name(o.name)
         out.append(_place(pr, plate or pi + 1, c, None, None))
     return out
@@ -460,6 +473,10 @@ def get_setting(key: str) -> dict:
     return {"key": key, "kind": kind, "value": cfg.get(key), "overridden": key in pr.overrides}
 
 
+PLATE_TEMP = {"Cool Plate": "cool_plate_temp", "Engineering Plate": "eng_plate_temp", "High Temp Plate": "hot_plate_temp",
+              "Textured PEI Plate": "textured_plate_temp", "Supertack Plate": "supertack_plate_temp"}
+
+
 @tool()
 def set_setting(key: str, value: str, slot: int = 0) -> dict:
     """Override a project setting. For filament settings (temperatures, plate temperatures...) slot = filament
@@ -486,7 +503,14 @@ def set_setting(key: str, value: str, slot: int = 0) -> dict:
         pr.overrides[key] = new
     else:
         pr.overrides[key] = value
-    return {"key": key, "kind": kind, "value": pr.overrides[key], "previous": cur}
+    res = {"key": key, "kind": kind, "value": pr.overrides[key], "previous": cur}
+    family = next((f for f in PLATE_TEMP.values() if key in (f, f + "_initial_layer")), None)
+    bed = pr.config().get("curr_bed_type")
+    if family and PLATE_TEMP.get(bed, family) != family:
+        res["warning"] = (f"this project prints on the {bed}, whose temperatures are {PLATE_TEMP[bed]}"
+                          f"(_initial_layer): {key} is not used unless the plate is changed with "
+                          "set_setting('curr_bed_type', ...)")
+    return res
 
 
 @tool()
@@ -560,9 +584,10 @@ def preview_plate(plate: int = 1, view: str = "iso", zoom: bool = False) -> Imag
 
 
 @tool()
-def preview_layer(plate: int = 1, layer: int = 0, z: float = 0) -> Image:
+def preview_layer(plate: int = 1, layer: int = 0, z: float = 0, zoom: bool = True) -> Image:
     """Image of one sliced layer seen from the top (needs slice_project first). Choose by layer number (1 = first)
-    or by height z in mm. Extrusions are drawn in the filament colors."""
+    or by height z in mm. Extrusions are drawn in the filament colors. zoom: frame the extrusions (default),
+    or False for the whole bed."""
     pr = P()
     if not S.sliced:
         raise ValueError("slice the project first (slice_project)")
@@ -572,7 +597,7 @@ def preview_layer(plate: int = 1, layer: int = 0, z: float = 0) -> Image:
     segs, k, zz, n = slicer.layer_paths(g, layer or (None if z else 1), z or None)
     title = f"Plate {plate} - layer {k}/{n} - z {zz:.2f} mm - {len(segs)} moves"
     return Image(data=preview.render_layer(segs, pr.info["bed"], [c for _, c in pr.filaments], title,
-                                           exclude=pr.info["exclude"]), format="png")
+                                           exclude=pr.info["exclude"], zoom=zoom), format="png")
 
 
 @tool()
@@ -589,6 +614,7 @@ def make_first_layer_test(plate: int = 1, height: float = 0.8, objects: list[str
     pr.plates.append(test)
     for o in src:
         c = copy.deepcopy(o)
+        c.uid = None
         lo, _ = c.bbox()
         keep = []
         for p in c.parts:

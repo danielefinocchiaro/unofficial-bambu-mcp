@@ -33,6 +33,7 @@ class Part:
 class Obj:
     def __init__(self, name, parts, at=(0.0, 0.0), settings=None):
         self.name, self.parts, self.at, self.settings = name, parts, tuple(at), settings or {}
+        self.uid = None           # stable id, given by Project.objects()
 
     def solid_parts(self):
         return [p for p in self.parts if p.subtype == "normal_part"] or self.parts
@@ -102,6 +103,7 @@ class Project:
         default_fil = info["default_filament"] or "Bambu PLA Basic @BBL X1C"
         self.filaments = [(presets.filament_for(n, self.machine), c) for n, c in (filaments or [(default_fil, "#FFFFFF")])]
         self.overrides = {}
+        self.last_uid = 0         # highest object id given so far (ids are never reused)
         self.plates = [Plate("Plate 1")]
         self.extras = {}          # files carried over from an opened 3MF (e.g. custom G-code per layer)
         self.warnings = []
@@ -123,16 +125,24 @@ class Project:
 
     # ------------------------------------------------------------ lookup
     def objects(self):
-        """[(plate_index, object)] in order (plate_index is 0-based)."""
-        return [(i, o) for i, pl in enumerate(self.plates) for o in pl.objects]
+        """[(plate_index, object)] in order (plate_index is 0-based). Every object gets a stable id (uid) the
+        first time it is listed; it does not change when objects move between plates or others are deleted."""
+        items = [(i, o) for i, pl in enumerate(self.plates) for o in pl.objects]
+        seen = set()
+        for _, o in items:
+            if getattr(o, "uid", None) is None or o.uid in seen:      # new, or a copy that kept the original's
+                o.uid = max([getattr(x, "uid", None) or 0 for _, x in items] + [self.last_uid]) + 1
+                self.last_uid = o.uid
+            seen.add(o.uid)
+        return items
 
     def find(self, ref):
-        """Object by name (case-insensitive), by 1-based global id, or 'plate:index'."""
+        """Object by name (case-insensitive), by id, or 'plate:index'."""
         items = self.objects()
         if isinstance(ref, int) or (isinstance(ref, str) and ref.strip().isdigit()):
-            k = int(ref) - 1
-            if 0 <= k < len(items):
-                return items[k]
+            hit = [(pi, o) for pi, o in items if o.uid == int(ref)]
+            if hit:
+                return hit[0]
         if isinstance(ref, str):
             if ":" in ref and all(x.strip().isdigit() for x in ref.split(":", 1)):
                 p, k = (int(x) for x in ref.split(":", 1))
@@ -325,13 +335,12 @@ class Project:
             "filaments": [{"slot": i + 1, "preset": n, "color": c} for i, (n, c) in enumerate(self.filaments)],
             "overrides": self.overrides, "plates": [], "warnings": self.warnings,
         }
-        gid = 0
+        self.objects()
         for pi, pl in enumerate(self.plates):
             objs = []
             for o in pl.objects:
-                gid += 1
                 w, d, h = o.size()
-                entry = {"id": gid, "name": o.name, "center_xy": [round(float(o.at[0]), 1), round(float(o.at[1]), 1)],
+                entry = {"id": o.uid, "name": o.name, "center_xy": [round(float(o.at[0]), 1), round(float(o.at[1]), 1)],
                          "size_mm": [round(float(w), 1), round(float(d), 1), round(float(h), 1)], "filaments": o.filaments(),
                          "parts": len(o.parts)}
                 if len(o.parts) > 1:
