@@ -602,12 +602,51 @@ def slice_project(plate: int = 0) -> dict:
 
 
 @tool()
-def preview_plate(plate: int = 1, view: str = "iso", zoom: bool = False) -> Image:
+def preview_plate(plate: int = 1, view: str = "iso", zoom: bool = False, labels: bool = False) -> Image:
     """Image of a plate with its objects in their filament colors (painted colors too).
-    view: iso | top. zoom: frame the objects instead of the whole bed, to see details."""
+    view: iso | top. zoom: frame the objects instead of the whole bed, to see details.
+    labels: write each object's id and name on it, e.g. view='top', labels=True to tell which part is which
+    (a part that came off the plate, the list in Bambu Handy's skip objects)."""
     pr = P()
     pr.plate(plate)
-    return Image(data=preview.render_plate(pr, plate - 1, "top" if view == "top" else "iso", zoom=zoom), format="png")
+    return Image(data=preview.render_plate(pr, plate - 1, "top" if view == "top" else "iso", zoom=zoom,
+                                           object_labels=labels), format="png")
+
+
+@tool()
+def reprint_objects(objects: list[str], brim: bool = True, name: str = "", slice: bool = True) -> dict:
+    """A new project with only some objects of the open one, e.g. a part that came off the plate and was skipped:
+    same printer, process, filaments and settings, laid out again (more plates if needed); brim=True gives each
+    an outer brim. Saved as a new file (never overwrites) and sliced; the open project is not changed:
+    open_project(file) then send_to_printer to print it. objects: names or ids (see get_project)."""
+    import copy
+    pr = P()
+    if not objects:
+        raise ValueError("list the objects to reprint (names or ids, see get_project)")
+    picked = []
+    for ref in objects:
+        _, o = pr.find(ref)
+        if all(o is not x for x in picked):
+            picked.append(o)
+    t = Project(name or f"{pr.name} reprint", pr.machine, pr.process, list(pr.filaments))
+    t.overrides = copy.deepcopy(pr.overrides)
+    for o in picked:
+        c = copy.deepcopy(o)
+        c.uid = None
+        if brim:
+            c.settings["brim_type"] = "outer_only"
+        t.plates[0].objects.append(c)
+    t.arrange()
+    path = next_free_path(os.path.join(out_dir(), f"{t.name}.3mf"))
+    threemf.write(t, path)
+    res = {"file": path, "objects": [o.name for o in picked], "plates": len(t.plates),
+           "brim": "outer_only" if brim else "as in the project"}
+    if slice:
+        sliced = next_free_path(path.replace(".3mf", "-sliced.3mf"))
+        res["sliced"] = [{k: st.get(k) for k in ("plate", "minutes", "grams", "warnings")}
+                         for st in slicer.slice_3mf(path, sliced)]
+    res["next"] = "open_project(file) then send_to_printer(plate=1)"
+    return res
 
 
 @tool()

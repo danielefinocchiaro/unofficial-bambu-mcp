@@ -80,9 +80,9 @@ def _rasterize(px, z, rgb, W, H, budget=2_000_000):
     return np.isfinite(zbuf), cbuf
 
 
-def render_plate(project, plate_index, view="iso", size=900, label=True, zoom=False):
+def render_plate(project, plate_index, view="iso", size=900, label=True, zoom=False, object_labels=False):
     """PNG bytes of one plate (0-based index) with its objects in their filament colors.
-    zoom: frame the objects instead of the whole bed."""
+    zoom: frame the objects instead of the whole bed. object_labels: write each object's id and name on it."""
     pl = project.plates[plate_index]
     bw, bd = project.info["bed"]
     colors = [_hex(c) for _, c in project.filaments]
@@ -172,6 +172,30 @@ def render_plate(project, plate_index, view="iso", size=900, label=True, zoom=Fa
         arr[covered] = colors[covered]
         img = Image.fromarray(arr.reshape(H, W, 3))
     img = img.resize((size, size), Image.LANCZOS)
+    if object_labels and pl.objects:
+        project.objects()                                   # makes sure every object has its id
+        over = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        do = ImageDraw.Draw(over)
+        font = _font(13)
+        boxes = []
+        for ob in pl.objects:
+            lo, hi = ob.bbox()
+            top = np.array([[ob.at[0], ob.at[1], hi[2] - lo[2]]])
+            x, y = to_px(_view(top, view)[:, :2])[0] / S
+            name = ob.name if len(ob.name) <= 24 else ob.name[:23] + "…"
+            txt = f"{ob.uid} {name}"
+            bx0, by0, bx1, by1 = do.textbbox((0, 0), txt, font=font)
+            w, h = bx1 - bx0 + 8, by1 - by0 + 6
+            x0 = int(min(max(x - w / 2, 2), size - w - 2))
+            y0 = int(min(max(y - h / 2, 2), size - h - 2))
+            for _ in range(6):                              # labels of close objects: step down until free
+                if not any(x0 < bx + bw and bx < x0 + w and y0 < by + bh and by < y0 + h for bx, by, bw, bh in boxes):
+                    break
+                y0 = int(min(y0 + h + 2, size - h - 2))
+            boxes.append((x0, y0, w, h))
+            do.rectangle([x0, y0, x0 + w, y0 + h], fill=(20, 22, 26, 200))
+            do.text((x0 + 4 - bx0, y0 + 3 - by0), txt, font=font, fill=(255, 255, 255, 255))
+        img = Image.alpha_composite(img.convert("RGBA"), over).convert("RGB")
     if label:
         d2 = ImageDraw.Draw(img)
         txt = f"Plate {plate_index + 1}: {pl.name}  |  {project.machine}  |  {len(pl.objects)} objects"

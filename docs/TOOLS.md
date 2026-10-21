@@ -1,6 +1,6 @@
 # Tools
 
-48 tools, generated from the server code by `scripts/gen_tools_doc.py`.
+49 tools, generated from the server code by `scripts/gen_tools_doc.py`.
 
 ## `bambu_status`
 
@@ -296,12 +296,29 @@ filament changes, layers and warnings. The sliced project is saved next to the p
 
 Image of a plate with its objects in their filament colors (painted colors too).
 view: iso | top. zoom: frame the objects instead of the whole bed, to see details.
+labels: write each object's id and name on it, e.g. view='top', labels=True to tell which part is which
+(a part that came off the plate, the list in Bambu Handy's skip objects).
 
 | Parameter | Type | Default |
 |---|---|---|
 | `plate` | integer | `1` |
 | `view` | string | `'iso'` |
 | `zoom` | boolean | `False` |
+| `labels` | boolean | `False` |
+
+## `reprint_objects`
+
+A new project with only some objects of the open one, e.g. a part that came off the plate and was skipped:
+same printer, process, filaments and settings, laid out again (more plates if needed); brim=True gives each
+an outer brim. Saved as a new file (never overwrites) and sliced; the open project is not changed:
+open_project(file) then send_to_printer to print it. objects: names or ids (see get_project).
+
+| Parameter | Type | Default |
+|---|---|---|
+| `objects` | array | required |
+| `brim` | boolean | `True` |
+| `name` | string | `''` |
+| `slice` | boolean | `True` |
 
 ## `preview_layer`
 

@@ -446,3 +446,27 @@ def test_reads_bambu_studio_1_6_file_with_objects_in_separate_models(tmp_path):
     assert "machine_start_gcode" not in pr.overrides and pr.overrides["sparse_infill_density"] == "5%"
     assert pr.machine == "Bambu Lab P1S 0.4 nozzle"
     assert any("machine_start_gcode" in w for w in pr.warnings)
+
+
+@needs_bambu
+def test_reprint_objects_and_labels(tmp_path, monkeypatch):
+    monkeypatch.setenv("UBMCP_DIR", str(tmp_path))
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    from unofficial_bambu_mcp import server as s
+    from unofficial_bambu_mcp import threemf
+    s.new_project("orig", "P1S", filaments=[{"preset": "Bambu PLA Basic", "color": "#000000"},
+                                            {"preset": "Bambu PLA Basic", "color": "#FFFFFF"}])
+    s.set_setting("sparse_infill_density", "25%")
+    s.add_shape("cylinder", diameter=8, height=11, name="pin a")
+    s.add_shape("cylinder", diameter=8, height=11, name="pin b", filament=2)
+    s.add_shape("box", name="body")
+    assert s.preview_plate(1, view="top", labels=True).data[:4] == b"\x89PNG"
+    with pytest.raises(ToolError, match="matches 2 objects"):
+        s.reprint_objects(["pin"], slice=False)
+    r = s.reprint_objects(["pin b"], slice=False)
+    t = threemf.read(r["file"])
+    (_, o), = t.objects()
+    assert o.name == "pin b" and o.settings["brim_type"] == "outer_only" and o.parts[0].filament == 2
+    assert len(t.filaments) == 2 and t.overrides["sparse_infill_density"] == "25%"
+    assert [x.name for _, x in s.P().objects()] == ["pin a", "pin b", "body"]      # the open project is untouched
