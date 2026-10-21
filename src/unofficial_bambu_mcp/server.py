@@ -358,7 +358,7 @@ def move_object(object: str, x: float | None = None, y: float | None = None, dx:
     nx = x if x is not None else o.at[0]
     ny = y if y is not None else o.at[1]
     o.at = (nx + dx, ny + dy)
-    res = {"name": o.name, "plate": pi + 1, "center_xy": [round(float(o.at[0]), 1), round(float(o.at[1]), 1)],
+    res = {"id": o.uid, "name": o.name, "plate": pi + 1, "center_xy": [round(float(o.at[0]), 1), round(float(o.at[1]), 1)],
            "size_mm": [round(float(v), 1) for v in o.size()]}
     if pr.out_of_bed(o):
         res["warning"] = "the object is (partly) outside the printable area"
@@ -1128,7 +1128,8 @@ def make_max_flow_test(filament: int = 1, low: float = 0, high: float = 0, step:
     res = _standalone(f"{pr.name} max flow test", filament, objs, over, pos)
     res.update({"filament": pr.filaments[filament - 1][0], "current_limit_mm3_s": cur,
                 "cylinders": [{"Q_mm3_s": q, "wall_speed_mm_s": round(sp)} for q, (_, _, sp) in zip(qs, items, strict=True)],
-                "next": "print it (send_to_printer or open the file), find the last cylinder with clean walls"})
+                "next": "it is a separate project: to print it, open_project(file) then send_to_printer (the open "
+                        "project here is replaced, save it first if needed); keep the last cylinder with clean walls"})
     return res
 
 
@@ -1146,7 +1147,9 @@ def make_retraction_test(filament: int = 1, lengths: list[float] | None = None) 
         ob = calibration.stringing_test()
         r = _standalone(f"{pr.name} retraction {L:g}mm", filament, [ob], {"filament_retraction_length": [f"{L:g}"]})
         files.append({"retraction_mm": L, **r})
-    return {"filament": pr.filaments[filament - 1][0], "tests": files}
+    return {"filament": pr.filaments[filament - 1][0], "tests": files,
+            "next": "separate projects: to print one, open_project(file) then send_to_printer (the open project here "
+                    "is replaced, save it first if needed)"}
 
 
 def main():
