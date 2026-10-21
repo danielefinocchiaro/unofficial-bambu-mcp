@@ -551,9 +551,10 @@ def save_project(path: str = "", open_in_bambu: bool = False) -> dict:
 
 @tool()
 def open_in_bambu_studio(path: str = "") -> dict:
-    """Open a .3mf in the Bambu Studio window: by default the last sliced file (to see the preview there),
-    otherwise the last saved one. Bambu Studio may ask what to do with the project already open."""
-    target = path or S.sliced or S.saved
+    """Open a .3mf in the Bambu Studio window: by default the last saved project (else the last sliced one).
+    Bambu Studio re-slices a project when asked (Slice plate), it does not reuse the slicing done here; to open
+    a plate sliced and ready to print, use send_to_printer(via='bambu_studio')."""
+    target = path or S.saved or S.sliced
     if not target:
         raise ValueError("nothing saved yet: call save_project first")
     return {"opened": studio.open_in_gui(os.path.expanduser(target))}

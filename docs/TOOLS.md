@@ -275,8 +275,9 @@ Never overwrites: if the file exists a -2, -3... suffix is added. Optionally ope
 
 ## `open_in_bambu_studio`
 
-Open a .3mf in the Bambu Studio window: by default the last sliced file (to see the preview there),
-otherwise the last saved one. Bambu Studio may ask what to do with the project already open.
+Open a .3mf in the Bambu Studio window: by default the last saved project (else the last sliced one).
+Bambu Studio re-slices a project when asked (Slice plate), it does not reuse the slicing done here; to open
+a plate sliced and ready to print, use send_to_printer(via='bambu_studio').
 
 | Parameter | Type | Default |
 |---|---|---|
