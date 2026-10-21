@@ -308,6 +308,8 @@ def read(path):
     for k in sorted(keys):
         if k in cfg:
             proj.overrides[k] = cfg[k]
+    if cfg.get("curr_bed_type"):      # a project choice, not a preset setting: never listed in the diff above
+        proj.overrides["curr_bed_type"] = cfg["curr_bed_type"]
 
     # objects from model_settings (names, parts, filaments, settings) + plates
     obj_meta, plates_meta = {}, []

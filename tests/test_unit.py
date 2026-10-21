@@ -84,6 +84,7 @@ def test_project_roundtrip(tmp_path):
     from unofficial_bambu_mcp import threemf
     from unofficial_bambu_mcp.project import Obj, Part, Project
     pr = Project("t", "P1S", filaments=[("Bambu PLA Basic", "#000000"), ("Bambu PLA Basic", "#FFFFFF")])
+    pr.overrides["curr_bed_type"] = "High Temp Plate"
     v, t = geometry.box(20, 20, 5)
     pr.plates[0].objects.append(Obj("Box", [Part("Box", v, t, 2)], at=(100, 100)))
     path = threemf.write(pr, str(tmp_path / "t.3mf"))
@@ -92,6 +93,7 @@ def test_project_roundtrip(tmp_path):
     assert o.name == "Box" and o.parts[0].filament == 2
     assert np.allclose(o.at, (100, 100), atol=0.01)
     assert back.filaments[1][1] == "#FFFFFF"
+    assert back.config()["curr_bed_type"] == "High Temp Plate"           # the build plate survives a reload
 
 
 @needs_bambu
