@@ -351,3 +351,98 @@ def test_user_filament_presets(tmp_path, monkeypatch):
     finally:
         monkeypatch.undo()
         presets.refresh()
+
+
+def _cube_xml(oid, size):
+    s = size
+    vs = [(0, 0, 0), (s, 0, 0), (s, s, 0), (0, s, 0), (0, 0, s), (s, 0, s), (s, s, s), (0, s, s)]
+    tris = [(0, 2, 1), (0, 3, 2), (4, 5, 6), (4, 6, 7), (0, 1, 5), (0, 5, 4), (1, 2, 6), (1, 6, 5),
+            (2, 3, 7), (2, 7, 6), (3, 0, 4), (3, 4, 7)]
+    v = "".join(f'<vertex x="{x}" y="{y}" z="{z}"/>' for x, y, z in vs)
+    t = "".join(f'<triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in tris)
+    return f'<object id="{oid}" type="model"><mesh><vertices>{v}</vertices><triangles>{t}</triangles></mesh></object>'
+
+
+def _old_3mf(path, files):
+    import zipfile
+    with zipfile.ZipFile(path, "w") as z:
+        for name, data in files.items():
+            z.writestr(name, data)
+    return str(path)
+
+
+CORE_NS = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
+PROD_NS = "http://schemas.microsoft.com/3dmanufacturing/production/2015/06"
+
+
+@needs_bambu
+def test_reads_bambu_studio_1_7_file_with_undeclared_prefix(tmp_path):
+    """Like Bambu Studio 1.7 files: p:UUID on components, but no xmlns:p on <model>; an author's filament change
+    on a filament that does not exist here is dropped, the one on a known filament kept."""
+    import json
+
+    from unofficial_bambu_mcp import threemf
+    model = (f'<?xml version="1.0" encoding="UTF-8"?><model unit="millimeter" xmlns="{CORE_NS}" '
+             f'xmlns:slic3rpe="http://schemas.slic3r.org/3mf/2017/06"><resources>{_cube_xml(1, 20)}'
+             '<object id="2" type="model"><components><component objectid="1" p:UUID="00000001-aaaa" '
+             'transform="1 0 0 0 1 0 0 0 1 0 0 0"/></components></object></resources>'
+             '<build><item objectid="2" transform="1 0 0 0 1 0 0 0 1 118 118 0" printable="1"/></build></model>')
+    ms = ('<config><object id="2"><metadata key="name" value="Cube A"/><part id="1" subtype="normal_part">'
+          '<metadata key="name" value="cube"/></part></object><plate><metadata key="plater_id" value="1"/>'
+          '<model_instance><metadata key="object_id" value="2"/><metadata key="instance_id" value="0"/>'
+          '</model_instance></plate></config>')
+    cfg = {"printer_settings_id": "Bambu Lab X1 Carbon 0.4 nozzle", "print_settings_id": "0.20mm Standard @BBL X1C",
+           "filament_settings_id": ["Generic PLA", "Nonexistent PLA @Nowhere"], "filament_colour": ["#FF0000", "#00FF00"],
+           "different_settings_to_system": ["brim_type", "nozzle_temperature", "nozzle_temperature", ""],
+           "brim_type": "no_brim", "nozzle_temperature": ["205", "250"],
+           "printable_area": ["0x0", "256x0", "256x256", "0x256"]}
+    p = _old_3mf(tmp_path / "a.3mf", {"3D/3dmodel.model": model, "Metadata/model_settings.config": ms,
+                                       "Metadata/project_settings.config": json.dumps(cfg)})
+    pr = threemf.read(p)
+    (_, o), = pr.objects()
+    assert o.name == "Cube A" and (o.size() == np.array([20, 20, 20])).all()
+    assert pr.overrides["brim_type"] == "no_brim"
+    assert pr.overrides["nozzle_temperature"][0] == "205" and pr.overrides["nozzle_temperature"][1] != "250"
+    assert any("nozzle_temperature" in w for w in pr.warnings)
+
+
+@needs_bambu
+def test_reads_bambu_studio_1_6_file_with_objects_in_separate_models(tmp_path):
+    """Like Bambu Studio 1.6 files: build items point (p:path) to 3D/Objects/*.model, whose components have no path
+    and the same ids in different files; the start G-code changed for an unknown printer is not carried over."""
+    import json
+
+    from unofficial_bambu_mcp import threemf
+    head = f'<?xml version="1.0" encoding="UTF-8"?><model unit="millimeter" xmlns="{CORE_NS}" xmlns:p="{PROD_NS}" requiredextensions="p">'
+    main = (head + '<resources/><build>'
+            '<item objectid="7" p:path="/3D/Objects/Assembly_35.model" transform="1 0 0 0 1 0 0 0 1 90 118 0" printable="1"/>'
+            '<item objectid="2" p:path="/3D/Objects/cube_1.model" transform="1 0 0 0 1 0 0 0 1 160 123 0" printable="1"/>'
+            '</build></model>')
+    asm = (head + f'<resources>{_cube_xml(3, 20)}<object id="7" type="model"><components>'
+           '<component objectid="3" transform="1 0 0 0 1 0 0 0 1 0 0 0"/></components></object></resources><build/></model>')
+    cube = (head + f'<resources>{_cube_xml(3, 10)}<object id="2" type="model"><components>'
+            '<component objectid="3" transform="1 0 0 0 1 0 0 0 1 0 0 0"/></components></object></resources><build/></model>')
+    ms = ('<config><object id="7"><metadata key="name" value="Assembly"/><metadata key="brim_type" value="outer_only"/>'
+          '<part id="3" subtype="normal_part"><metadata key="name" value="big"/></part></object>'
+          '<object id="2"><metadata key="name" value="Cube B"/><part id="3" subtype="normal_part">'
+          '<metadata key="name" value="small"/><metadata key="extruder" value="2"/></part></object>'
+          '<plate><metadata key="plater_id" value="1"/>'
+          '<model_instance><metadata key="object_id" value="7"/><metadata key="instance_id" value="0"/></model_instance>'
+          '<model_instance><metadata key="object_id" value="2"/><metadata key="instance_id" value="0"/></model_instance>'
+          '</plate></config>')
+    cfg = {"printer_settings_id": "Bambu Lab X1 0.4 nozzle - no prime line", "print_settings_id": "0.20mm Standard @BBL X1C",
+           "filament_settings_id": ["Generic PLA", "Generic TPU"], "filament_colour": ["#FFFFFF", "#000000"],
+           "different_settings_to_system": ["sparse_infill_density", "", "", "machine_start_gcode"],
+           "sparse_infill_density": "5%", "machine_start_gcode": "M973 S3 P1 ; lidar of the X1",
+           "printable_area": ["0x0", "256x0", "256x256", "0x256"]}
+    p = _old_3mf(tmp_path / "b.3mf", {"3D/3dmodel.model": main, "3D/Objects/Assembly_35.model": asm,
+                                       "3D/Objects/cube_1.model": cube, "Metadata/model_settings.config": ms,
+                                       "Metadata/project_settings.config": json.dumps(cfg)})
+    pr = threemf.read(p)
+    objs = {o.name: o for _, o in pr.objects()}
+    assert set(objs) == {"Assembly", "Cube B"}
+    assert objs["Assembly"].size()[0] == pytest.approx(20) and objs["Cube B"].size()[0] == pytest.approx(10)
+    assert objs["Assembly"].settings == {"brim_type": "outer_only"} and objs["Cube B"].parts[0].filament == 2
+    assert "machine_start_gcode" not in pr.overrides and pr.overrides["sparse_infill_density"] == "5%"
+    assert pr.machine == "Bambu Lab P1S 0.4 nozzle"
+    assert any("machine_start_gcode" in w for w in pr.warnings)

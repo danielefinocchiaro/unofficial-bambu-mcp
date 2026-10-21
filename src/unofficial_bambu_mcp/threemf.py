@@ -216,9 +216,27 @@ def _bambu_matrix(s):
     return np.array(v).reshape(4, 4) if len(v) == 16 else np.eye(4)
 
 
+def _declare_prefixes(xml_bytes):
+    """Old Bambu Studio files (1.6/1.7) use p:UUID without declaring the p prefix, which no XML parser accepts:
+    declare p (and any other undeclared prefix) on the <model> element."""
+    head = xml_bytes[:4096]
+    start = re.search(rb"<model\b[^>]*>", head)
+    if not start:
+        return xml_bytes
+    declared = set(re.findall(rb"xmlns:([A-Za-z_][\w.-]*)=", start.group(0)))
+    used = set(re.findall(rb"[<\s/]([A-Za-z_][\w.-]*):[A-Za-z_]", xml_bytes)) - {b"xml", b"xmlns", b"http", b"https"}
+    missing = used - declared
+    if not missing:
+        return xml_bytes
+    decl = b"".join(b' xmlns:%s="%s"' % (pf, PROD.encode() if pf == b"p" else b"urn:unbound:" + pf) for pf in sorted(missing))
+    i = start.start() + len(b"<model")
+    return xml_bytes[:i] + decl + xml_bytes[i:]
+
+
 def _parse_model(xml_bytes):
-    """{object_id: ('mesh', verts, tris, attrs) | ('components', [(path, objid, matrix)])}"""
-    root = ET.fromstring(xml_bytes)
+    """{object_id: ('mesh', verts, tris, attrs) | ('components', [(path, objid, matrix)])},
+    build: [(object_id, matrix, printable, path of the model file holding the object or None)]"""
+    root = ET.fromstring(_declare_prefixes(xml_bytes))
     q = f"{{{CORE}}}"
     out = {}
     for obj in root.iter(q + "object"):
@@ -246,12 +264,69 @@ def _parse_model(xml_bytes):
     b = root.find(q + "build")
     if b is not None:
         for it in b.iter(q + "item"):
-            build.append((it.get("objectid"), _matrix(it.get("transform")), it.get("printable", "1")))
+            build.append((it.get("objectid"), _matrix(it.get("transform")), it.get("printable", "1"),
+                          it.get(f"{{{PROD}}}path")))
     return out, build
 
 
 def _meta(el):
     return {m.get("key"): m.get("value") for m in el.findall("metadata") if m.get("key")}
+
+
+def _author_changes(proj, cfg, same_printer, remapped, warnings):
+    """The author's changes to the presets, from different_settings_to_system: [process, filament 1..n, printer].
+    Printer changes (e.g. a custom start G-code) only make sense on that printer, filament changes only on that
+    filament: they are dropped, with a warning, when the printer or the filament was replaced."""
+    diff = list(cfg.get("different_settings_to_system") or [])
+    if not diff:
+        return
+    split = [{k for k in (d or "").split(";") if k} for d in diff]
+    n = len(proj.filaments)
+    process = split[0]
+    printer = split[-1] if len(split) >= 2 else set()
+    per_fil = split[1:-1] if len(split) >= 2 else []
+    for k in sorted(process):
+        if k in cfg:
+            proj.overrides[k] = cfg[k]
+    if printer:
+        if same_printer:
+            for k in sorted(printer):
+                if k in cfg:
+                    proj.overrides[k] = cfg[k]
+        else:
+            warnings.append(f"printer settings changed by the author for the original printer were not carried over: "
+                            f"{', '.join(sorted(printer))}")
+    fkeys = set().union(*per_fil) if per_fil else set()
+    if not fkeys:
+        return
+    base = proj.config()
+    dropped = set()
+    for k in sorted(fkeys):
+        vals = cfg.get(k)
+        cur = base.get(k)
+        if not isinstance(vals, list) or not isinstance(cur, list) or len(cur) < n:
+            continue
+        new = list(cur)
+        for i in range(min(n, len(per_fil))):
+            if k in per_fil[i] and i < len(vals):
+                if remapped[i] if i < len(remapped) else True:
+                    dropped.add(k)
+                else:
+                    new[i] = vals[i]
+        if new != cur:
+            proj.overrides[k] = new
+    if dropped:
+        warnings.append(f"filament settings changed by the author were not carried over to replaced filaments: "
+                        f"{', '.join(sorted(dropped))}")
+
+
+def _bed_width(cfg, fallback):
+    """Bed width of the printer the file was made for (plates are laid out with it), from printable_area."""
+    try:
+        xs = [float(p.split("x")[0]) for p in cfg.get("printable_area") or []]
+        return (max(xs) - min(xs)) if xs else fallback
+    except (ValueError, AttributeError):
+        return fallback
 
 
 def read(path):
@@ -277,6 +352,7 @@ def read(path):
             warnings.append("the file contains sliced G-code: it will be re-sliced after changes")
 
     machine = cfg.get("printer_settings_id") or "Bambu Lab X1 Carbon 0.4 nozzle"
+    file_machine = machine
     if not presets.exists("machine", machine):
         warnings.append(f"printer preset '{machine}' not found, using P1S")
         machine = presets.machine_name("P1S")
@@ -286,8 +362,9 @@ def read(path):
         process = None
     fil_names = cfg.get("filament_settings_id") or []
     colors = cfg.get("filament_colour") or ["#FFFFFF"] * len(fil_names)
-    fils = []
+    fils, remapped = [], []
     for i, n in enumerate(fil_names or ["Bambu PLA Basic @BBL X1C"]):
+        remapped.append(not presets.exists("filament", n))
         if not presets.exists("filament", n):
             base = n.split(" @")[0]
             try:
@@ -300,14 +377,7 @@ def read(path):
         fils.append((n, (colors[i] if i < len(colors) else "#FFFFFF")[:7]))
     proj = Project(name=path.rsplit("/", 1)[-1].rsplit(".", 1)[0], printer=machine, process=process, filaments=fils)
     proj.filaments = fils
-    # project-level changes made by the author (keys listed in different_settings_to_system)
-    diff = cfg.get("different_settings_to_system") or []
-    keys = set()
-    for d in diff:
-        keys |= {k for k in (d or "").split(";") if k}
-    for k in sorted(keys):
-        if k in cfg:
-            proj.overrides[k] = cfg[k]
+    _author_changes(proj, cfg, machine == file_machine, remapped, warnings)
     if cfg.get("curr_bed_type"):      # a project choice, not a preset setting: never listed in the diff above
         proj.overrides["curr_bed_type"] = cfg["curr_bed_type"]
 
@@ -322,31 +392,30 @@ def read(path):
             inst = [(_meta(mi).get("object_id"), int(_meta(mi).get("instance_id") or 0))
                     for mi in pl.findall("model_instance")]
             plates_meta.append((md, inst))
-    bed_w, bed_d = proj.info["bed"]
+    bed_w = _bed_width(cfg, proj.info["bed"][0])
     n_plates = max(1, len(plates_meta))
 
-    def world_parts(oid, m_item):
-        kind = main.get(oid)
+    def world_parts(oid, m_item, src, depth=0):
+        """Meshes of object oid defined in model `src`; a component without a path lives in the same file
+        as its parent (ids repeat from file to file)."""
+        kind = src.get(oid)
         out = []
-        if kind is None:
+        if kind is None or depth > 4:
             return out
         if kind[0] == "mesh":
             out.append((oid, m_item, kind[1], kind[2], kind[3]))
         else:
             for pth, cid, m_c in kind[1]:
-                src = sub(pth) if pth else main
-                mesh = src.get(cid)
-                if mesh and mesh[0] == "mesh":
-                    out.append((cid, m_item @ m_c, mesh[1], mesh[2], mesh[3]))
+                out += world_parts(cid, m_item @ m_c, sub(pth) if pth else src, depth + 1)
         return out
 
     built, seen = {}, {}
-    for oid, m_item, printable in build:
+    for oid, m_item, printable, item_path in build:
         k_inst = seen.get(oid, 0)
         seen[oid] = k_inst + 1
         md, parts_md = obj_meta.get(oid, ({}, {}))
         parts = []
-        for cid, m, verts, tris, attrs in world_parts(oid, m_item):
+        for cid, m, verts, tris, attrs in world_parts(oid, m_item, sub(item_path) if item_path else main):
             subtype, pmd = parts_md.get(cid, ("normal_part", {}))
             fil = int(pmd.get("extruder") or md.get("extruder") or 1)
             keep = {k: v for k, v in pmd.items() if k not in ("name", "matrix", "extruder", "source_file",

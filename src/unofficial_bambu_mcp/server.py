@@ -4,6 +4,7 @@ Unofficial community project, not affiliated with or endorsed by Bambu Lab.
 """
 import functools
 import os
+import zipfile
 
 import numpy as np
 from mcp.server.mcpserver import Image, MCPServer
@@ -32,7 +33,7 @@ def tool():
         def wrapper(*args, **kwargs):
             try:
                 return fn(*args, **kwargs)
-            except (ValueError, LookupError, OSError, RuntimeError) as e:
+            except (ValueError, LookupError, OSError, RuntimeError, SyntaxError, zipfile.BadZipFile) as e:
                 raise ToolError(str(e) or type(e).__name__) from e
         return mcp.tool()(wrapper)
     return deco
