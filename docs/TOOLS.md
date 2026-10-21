@@ -475,10 +475,12 @@ piece is turned upside down so it prints on the flat cut face. Modifiers and pai
 
 ## `add_modifier`
 
-Add a box-shaped part to an object, covering its whole footprint between z_from and z_to (mm from the
+Add a part to an object, covering its whole footprint between z_from and z_to (mm from the
 object's bottom; z_to 0 = top), or only region [x0, y0, x1, y1] (mm from the object's center).
 kind: modifier (different settings inside, e.g. {"sparse_infill_density": "100%"} for the top 5 mm),
 negative (removes material), support_blocker, support_enforcer.
+shape: box, or cylinder (round, as wide as the smaller side of the region: e.g. a hole for a magnet or a
+screw is kind='negative', shape='cylinder', region=[-4, -4, 4, 4] for 8 mm).
 
 | Parameter | Type | Default |
 |---|---|---|
@@ -488,6 +490,7 @@ negative (removes material), support_blocker, support_enforcer.
 | `z_from` | number | `0` |
 | `z_to` | number | `0` |
 | `region` | array / null | `None` |
+| `shape` | string | `'box'` |
 
 ## `remove_part`
 

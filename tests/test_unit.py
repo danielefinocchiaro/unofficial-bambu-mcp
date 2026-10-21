@@ -284,3 +284,32 @@ def test_calibrations_reuse_empty_plate_and_slice_all_skips_empty(tmp_path, monk
     assert s.S.sliced_plates == {1: 1, 3: 2}                                 # the sliced file has no empty plate
     assert slicer.gcode(res["sliced_file"], 1) and slicer.gcode(res["sliced_file"], 2)
     assert s.preview_layer(3, layer=1).data                                  # project numbers keep working
+
+
+def test_sliced_stats_reports_pauses(tmp_path):
+    import zipfile
+
+    from unofficial_bambu_mcp import threemf
+    p = tmp_path / "s.3mf"
+    with zipfile.ZipFile(p, "w") as z:
+        z.writestr("Metadata/slice_info.config", '<config><plate><metadata key="index" value="1"/>'
+                   '<metadata key="prediction" value="600"/><metadata key="weight" value="4.5"/>'
+                   '<metadata key="pause_count" value="1"/></plate></config>')
+    st = threemf.sliced_stats(str(p))[0]
+    assert st["minutes"] == 10.0 and st["grams"] == 4.5 and st["pauses"] == 1
+
+
+@needs_bambu
+def test_round_negative_part(tmp_path, monkeypatch):
+    monkeypatch.setenv("UBMCP_DIR", str(tmp_path))
+    from unofficial_bambu_mcp import server as s
+    s.new_project("hole", "P1S")
+    s.add_shape("box", width=40, depth=40, height=10, name="B")
+    s.add_modifier("B", kind="negative", region=[-4, -4, 4, 4], shape="cylinder")
+    part = s.P().find("B")[1].parts[-1]
+    size = part.verts.max(0) - part.verts.min(0)
+    assert part.subtype == "negative_part" and size[0] == pytest.approx(8, abs=0.01)
+    assert size[2] >= 10                                  # through the whole object
+    from mcp.server.mcpserver.exceptions import ToolError
+    with pytest.raises(ToolError, match="box or cylinder"):
+        s.add_modifier("B", kind="negative", shape="sphere")

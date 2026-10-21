@@ -1011,11 +1011,13 @@ SUBTYPES = {"modifier": "modifier_part", "negative": "negative_part", "support_b
 
 @tool()
 def add_modifier(object: str, settings: dict[str, str] | None = None, kind: str = "modifier", z_from: float = 0,
-                 z_to: float = 0, region: list[float] | None = None) -> dict:
-    """Add a box-shaped part to an object, covering its whole footprint between z_from and z_to (mm from the
+                 z_to: float = 0, region: list[float] | None = None, shape: str = "box") -> dict:
+    """Add a part to an object, covering its whole footprint between z_from and z_to (mm from the
     object's bottom; z_to 0 = top), or only region [x0, y0, x1, y1] (mm from the object's center).
     kind: modifier (different settings inside, e.g. {"sparse_infill_density": "100%"} for the top 5 mm),
-    negative (removes material), support_blocker, support_enforcer."""
+    negative (removes material), support_blocker, support_enforcer.
+    shape: box, or cylinder (round, as wide as the smaller side of the region: e.g. a hole for a magnet or a
+    screw is kind='negative', shape='cylinder', region=[-4, -4, 4, 4] for 8 mm)."""
     pr = P(True)
     _, o = pr.find(object)
     if kind not in SUBTYPES:
@@ -1037,9 +1039,16 @@ def add_modifier(object: str, settings: dict[str, str] | None = None, kind: str 
         x0, x1, y0, y1 = c[0] + x0, c[0] + x1, c[1] + y0, c[1] + y1
     else:
         x0, y0, x1, y1 = lo[0] - 1, lo[1] - 1, hi[0] + 1, hi[1] + 1
-    v, t = geometry.box(x1 - x0, y1 - y0, (z1 - z_from) + (0.02 if z1 >= h else 0))
+    height = (z1 - z_from) + (0.02 if z1 >= h else 0)
+    if shape == "cylinder":
+        d = min(x1 - x0, y1 - y0)
+        v, t = geometry.cylinder(d, height)
+    elif shape == "box":
+        v, t = geometry.box(x1 - x0, y1 - y0, height)
+    else:
+        raise ValueError("shape must be box or cylinder")
     v = v + np.array([(x0 + x1) / 2, (y0 + y1) / 2, lo[2] + z_from])
-    name = f"{kind.replace('_', ' ').capitalize()} {z_from:g}-{z1:g} mm"
+    name = f"{kind.replace('_', ' ').capitalize()} {z_from:g}-{z1:g} mm" + (f" Ø{d:g}" if shape == "cylinder" else "")
     o.parts.append(Part(name, v, t, o.solid_parts()[0].filament, SUBTYPES[kind], meta=dict(settings)))
     return {"name": o.name, "added": name, "parts": [{"name": p.name, "type": p.subtype, **({"settings": p.meta} if p.meta else {})}
                                                      for p in o.parts]}

@@ -414,4 +414,7 @@ def sliced_stats(path):
         warn = re.findall(r'<warning msg="([^"]+)"', blk)
         plates.append({"plate": idx, "minutes": round(pred / 60, 1), "grams": round(wt, 1),
                        "grams_per_filament": fil, "warnings": warn})
+        pauses = int((re.search(r'key="pause_count" value="(\d+)"', blk) or [0, 0])[1])
+        if pauses:
+            plates[-1]["pauses"] = pauses
     return plates
