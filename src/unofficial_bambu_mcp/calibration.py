@@ -21,9 +21,9 @@ def _box(x0, y0, z0, x1, y1, z1):
     return m3.Manifold.cube((x1 - x0, y1 - y0, z1 - z0)).translate((x0, y0, z0))
 
 
-def _engrave_front(solid, text, cx, cz, y_face, cap=4.5, depth=0.6):
-    """Engrave text on a face looking toward -Y (readable from the front)."""
-    shape = geometry.text_outline(text, cap)
+def _engrave_front(solid, text, cx, cz, y_face, cap=4.5, depth=0.6, spacing=0.0):
+    """Engrave text on a face looking toward -Y (readable from the front), centered on (cx, cz)."""
+    shape = geometry.text_outline(text, cap, spacing=spacing)
     v, t = geometry.extrude(shape, depth + 1.0)
     m = geometry.to_manifold(v, t).rotate((90.0, 0.0, 0.0))     # text in the XZ plane, slab toward -Y
     m = m.translate((cx, y_face + depth, cz))
@@ -59,7 +59,9 @@ def temperature_tower(temps, layer_h=0.2, first_h=0.2, filament=1, block_h=8.0):
         z0 = base_h + i * block_h
         blk = _box(-w / 2, -d / 2, z0, w / 2, d / 2, z0 + block_h)
         blk = blk - _box(-7, -d / 2 - 1, z0 - 0.01, 15, d / 2 + 1, z0 + block_h - 2.4)   # bridge 22 mm, 2.4 thick
-        blk = _engrave_front(blk, f"{temp:g}", -16.0, z0 + block_h / 2 - 2.2, -d / 2)
+        # big, deep digits inside their own block: with a 0.4 mm nozzle thinner strokes fill up (worse when hot)
+        blk = _engrave_front(blk, f"{temp:g}", -16.0, z0 + block_h / 2, -d / 2, cap=min(6.0, block_h - 2.0),
+                             depth=1.0, spacing=0.4)
         parts.append(blk)
     solid = m3.Manifold.batch_boolean(parts, m3.OpType.Add)
     v, t = _mesh(solid)
