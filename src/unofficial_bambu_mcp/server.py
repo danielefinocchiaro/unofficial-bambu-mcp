@@ -809,6 +809,11 @@ def remove_layer_action(plate: int, index: int = 0) -> dict:
     return {"plate": plate, "layer_actions": [g.as_dict() for g in pl.layer_gcodes]}
 
 
+def _fil_label(pr, slot):
+    """Short filament name for file names: the preset without its '@printer' part."""
+    return pr.filaments[slot - 1][0].split(" @")[0]
+
+
 def _calib_plate(pr, name, objs, positions=None):
     pl = pr.plates[-1]
     if pl.objects or pl.layer_gcodes:       # the last plate is in use: add one (an empty one, e.g. plate 1, is reused)
@@ -1125,7 +1130,7 @@ def make_max_flow_test(filament: int = 1, low: float = 0, high: float = 0, step:
         objs += [cyl, tag]
         pos += [(x, y + 5), (x, y - 21)]
     over = {"filament_max_volumetric_speed": [f"{max(qs) + 5:g}"], "slow_down_for_layer_cooling": ["0"]}
-    res = _standalone(f"{pr.name} max flow test", filament, objs, over, pos)
+    res = _standalone(f"{pr.name} max flow test - {_fil_label(pr, filament)}", filament, objs, over, pos)
     res.update({"filament": pr.filaments[filament - 1][0], "current_limit_mm3_s": cur,
                 "cylinders": [{"Q_mm3_s": q, "wall_speed_mm_s": round(sp)} for q, (_, _, sp) in zip(qs, items, strict=True)],
                 "next": "it is a separate project: to print it, open_project(file) then send_to_printer (the open "
@@ -1145,7 +1150,8 @@ def make_retraction_test(filament: int = 1, lengths: list[float] | None = None) 
     files = []
     for L in lengths[:8]:
         ob = calibration.stringing_test()
-        r = _standalone(f"{pr.name} retraction {L:g}mm", filament, [ob], {"filament_retraction_length": [f"{L:g}"]})
+        r = _standalone(f"{pr.name} retraction {L:g}mm - {_fil_label(pr, filament)}", filament, [ob],
+                        {"filament_retraction_length": [f"{L:g}"]})
         files.append({"retraction_mm": L, **r})
     return {"filament": pr.filaments[filament - 1][0], "tests": files,
             "next": "separate projects: to print one, open_project(file) then send_to_printer (the open project here "
