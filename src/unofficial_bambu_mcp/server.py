@@ -42,6 +42,7 @@ class Session:
     project = None
     saved = None
     sliced = None
+    sliced_plates = {}    # project plate -> plate number inside the sliced file (they differ when empty plates were left out)
     watch = None          # project file that Bambu Studio may save (the last one opened or saved here)
     watch_mtime = 0.0
     dirty = False         # changes made here and not saved yet
@@ -164,6 +165,7 @@ def new_project(name: str, printer: str = "P1S", process: str = "", filaments: l
     S.project = Project(name, printer, process or None, fils)
     _use_preferred_bed(S.project)
     S.saved = S.sliced = None
+    S.sliced_plates = {}
     _watch(None)
     S.dirty = True
     return _short()
@@ -176,6 +178,7 @@ def open_project(path: str) -> dict:
     path = os.path.abspath(os.path.expanduser(path))
     S.project = threemf.read(path)
     S.saved, S.sliced = None, None
+    S.sliced_plates = {}
     _watch(path)
     S.dirty = False
     return P().summary()
@@ -560,18 +563,40 @@ def open_in_bambu_studio(path: str = "") -> dict:
 def slice_project(plate: int = 0) -> dict:
     """Slice with Bambu Studio (plate 0 = all). Returns per plate: minutes, grams (total and per filament slot),
     filament changes, layers and warnings. The sliced project is saved next to the project file."""
+    import copy
     pr = P()
+    full = [i + 1 for i, pl in enumerate(pr.plates) if pl.objects]
+    if plate and plate not in full:
+        pr.plate(plate)
+        raise ValueError(f"plate {plate} is empty")
+    if not full:
+        raise ValueError("nothing to slice: every plate is empty")
+    # Bambu Studio refuses to slice 'all plates' when one is empty: slice a copy without the empty plates
+    sub = pr
+    if not plate and len(full) < len(pr.plates):
+        sub = copy.copy(pr)
+        sub.plates = [pr.plates[n - 1] for n in full]
+    numbers = full if sub is not pr else list(range(1, len(pr.plates) + 1))    # sliced file plate k = numbers[k-1]
     base = S.saved or os.path.join(out_dir(), f"{pr.name}.3mf")
     tmp = next_free_path(os.path.join(out_dir(), f".{pr.name}-slicing.3mf"))
-    threemf.write(pr, tmp)
+    threemf.write(sub, tmp)
     out = next_free_path(base.replace(".3mf", "-sliced.3mf"))
     try:
-        stats = slicer.slice_3mf(tmp, out, plate)
+        stats = slicer.slice_3mf(tmp, out, numbers.index(plate) + 1 if plate else 0)
     finally:
         if os.path.exists(tmp):
             os.remove(tmp)
+    for st in stats:
+        st["plate"] = numbers[st["plate"] - 1]
     S.sliced = out
-    return {"sliced_file": out, "plates": stats}
+    S.sliced_plates = {n: k + 1 for k, n in enumerate(numbers)}
+    res = {"sliced_file": out, "plates": stats}
+    if not plate and sub is not pr:
+        res["skipped_empty_plates"] = [n for n in range(1, len(pr.plates) + 1) if n not in full]
+        res["note"] = "the sliced file leaves the empty plates out, so its plates are numbered without them"
+    if plate:
+        res["note"] = f"the sliced file holds plate {plate} only (Bambu Studio exports just the sliced plate)"
+    return res
 
 
 @tool()
@@ -591,7 +616,7 @@ def preview_layer(plate: int = 1, layer: int = 0, z: float = 0, zoom: bool = Tru
     pr = P()
     if not S.sliced:
         raise ValueError("slice the project first (slice_project)")
-    g = slicer.gcode(S.sliced, plate)
+    g = slicer.gcode(S.sliced, S.sliced_plates.get(plate, plate))
     if not g:
         raise ValueError(f"plate {plate} was not sliced")
     segs, k, zz, n = slicer.layer_paths(g, layer or (None if z else 1), z or None)
@@ -784,8 +809,11 @@ def remove_layer_action(plate: int, index: int = 0) -> dict:
 
 
 def _calib_plate(pr, name, objs, positions=None):
-    pl = Plate(name)
-    pr.plates.append(pl)
+    pl = pr.plates[-1]
+    if pl.objects or pl.layer_gcodes:       # the last plate is in use: add one (an empty one, e.g. plate 1, is reused)
+        pl = Plate(name)
+        pr.plates.append(pl)
+    pl.name = name
     bw, bd = pr.info["bed"]
     for i, o in enumerate(objs):
         dx, dy = positions[i] if positions else (0.0, 0.0)

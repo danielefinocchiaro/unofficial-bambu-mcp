@@ -266,3 +266,21 @@ def test_plate_temperature_for_another_plate_warns(tmp_path, monkeypatch):
     assert "warning" not in s.set_setting("hot_plate_temp_initial_layer", "65")
     s.set_setting("curr_bed_type", "Textured PEI Plate")
     assert "warning" not in s.set_setting("textured_plate_temp", "60")
+
+
+@needs_bambu
+def test_calibrations_reuse_empty_plate_and_slice_all_skips_empty(tmp_path, monkeypatch):
+    monkeypatch.setenv("UBMCP_DIR", str(tmp_path))
+    from unofficial_bambu_mcp import server as s
+    s.new_project("cal", "P1S")
+    assert s.make_pa_tower(start=0, end=0.008, step=0.004)["plate"] == 1      # plate 1 was empty: reused
+    s.add_plate()                                                            # plate 2: empty
+    s.add_shape("box", plate=1, x=40, y=40, width=10, depth=10, height=2)
+    s.add_plate()
+    s.add_shape("cylinder", plate=3, diameter=10, height=2)
+    res = s.slice_project()
+    assert res["skipped_empty_plates"] == [2] and [p["plate"] for p in res["plates"]] == [1, 3]
+    from unofficial_bambu_mcp import slicer
+    assert s.S.sliced_plates == {1: 1, 3: 2}                                 # the sliced file has no empty plate
+    assert slicer.gcode(res["sliced_file"], 1) and slicer.gcode(res["sliced_file"], 2)
+    assert s.preview_layer(3, layer=1).data                                  # project numbers keep working

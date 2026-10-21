@@ -17,7 +17,7 @@ t = s.make_temperature_tower(1)
 f = s.make_flow_test(1)
 p = s.make_pa_tower(1)
 print(json.dumps({"temp": t["temperatures_bottom_to_top"], "flow": f["squares"][:3], "pa_height": p["height_mm"]}))
-s.remove_plate(1)                                   # the empty default plate
+assert (t["plate"], f["plate"], p["plate"]) == (1, 2, 3)     # the empty default plate is used by the first one
 for k in (1, 2, 3):
     with open(os.path.join(OUT, f"calib_plate{k}.png"), "wb") as fh:
         fh.write(s.preview_plate(k, "iso", zoom=True).data)
