@@ -242,10 +242,11 @@ def filament_colors(preset):
 
 @lru_cache(maxsize=1)
 def _fid_index():
-    """Bambu filament id (e.g. GFA00) -> filament line name ("Bambu PLA Basic"), from the presets that declare it."""
+    """Filament id -> filament line name, from the presets that declare it: Bambu ids (GFA00 -> "Bambu PLA Basic")
+    and the user's own filaments (P80ed8f6 -> "eSUN PLA Basic Nero"), system presets first."""
     idx = {}
-    for (k, n), (p, src) in _index().items():
-        if k != "filament" or src != "system":
+    for (k, n), (p, _src) in sorted(_index().items(), key=lambda it: it[1][1] != "system"):
+        if k != "filament":
             continue
         try:
             with open(p, encoding="utf-8") as f:

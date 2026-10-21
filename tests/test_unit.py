@@ -114,6 +114,7 @@ def test_printer_summary():
     s = printer.summarize(rep)
     assert s["state"] == "printing" and s["progress_percent"] == 42 and s["layer"] == [9, 20]
     assert s["ams_trays"][1]["color"] == "#FFFFFF" and s["ams_trays"][2]["empty"]
+    assert "remain_percent" not in s["ams_trays"][1]                   # -1 = unknown (spool without RFID)
     assert s["active_slot"] == 2
 
 

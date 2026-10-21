@@ -289,6 +289,14 @@ def _bits(x):
         return None
 
 
+def _line(filament_id):
+    """Name of the filament behind an AMS tray's id (a user's own filament has no brand name in the report)."""
+    try:
+        return presets.line_for_filament_id(filament_id) if filament_id else None
+    except (OSError, ValueError):
+        return None
+
+
 def summarize(r):
     """Human-sized status from a raw report."""
     state = r.get("gcode_state")
@@ -324,9 +332,11 @@ def summarize(r):
             k = int(t.get("id", 0))
             entry = {"slot": u * 4 + k + 1, "ams": u + 1, "tray": k + 1}
             if t.get("tray_type"):
-                entry.update({"type": t.get("tray_type"), "name": t.get("tray_sub_brands") or t.get("tray_type"),
-                              "color": _color(t.get("tray_color")), "remain_percent": _num(t.get("remain")),
-                              "filament_id": t.get("tray_info_idx")})
+                entry.update({"type": t.get("tray_type"), "name": t.get("tray_sub_brands") or _line(t.get("tray_info_idx"))
+                              or t.get("tray_type"), "color": _color(t.get("tray_color")),
+                              "remain_percent": _num(t.get("remain")), "filament_id": t.get("tray_info_idx")})
+                if entry["remain_percent"] is None or entry["remain_percent"] < 0:   # -1: unknown (no RFID)
+                    del entry["remain_percent"]
             elif exist is not None and (exist >> (u * 4 + k)) & 1:
                 entry["unknown"] = True               # a spool without RFID that nobody has set in the AMS
                 unknown.append(entry["slot"])
