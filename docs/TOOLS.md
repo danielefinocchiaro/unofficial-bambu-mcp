@@ -425,13 +425,18 @@ When sending it, turn off the printer's automatic flow dynamics calibration.
 ## `save_filament_preset`
 
 Save the filament of a slot, with this project's changes for that slot (temperatures, flow ratio, plate
-temperatures...), as a new Bambu Studio user preset. It appears in Bambu Studio after a restart and can be
-picked for an AMS slot. Never overwrites an existing preset.
+temperatures...), as a Bambu Studio user preset; it appears after Bambu Studio restarts.
+A new filament (made from a Generic preset, or with another filament_vendor) is saved like Bambu Studio's
+Create Filament does: its own filament id, so it can be picked for an AMS slot (Device > AMS). Changes to a
+Bambu filament are saved as a variant of it, so its RFID spools still match it.
+replace=True updates an existing user preset with that name (e.g. after a calibration): it keeps its
+filament id, so AMS slots set to it stay valid, and a backup copy is kept. Never overwrites otherwise.
 
 | Parameter | Type | Default |
 |---|---|---|
 | `slot` | integer | required |
 | `name` | string | required |
+| `replace` | boolean | `False` |
 
 ## `sync_with_bambu_studio`
 

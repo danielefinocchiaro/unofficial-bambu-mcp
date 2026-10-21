@@ -315,3 +315,38 @@ def test_round_negative_part(tmp_path, monkeypatch):
     from mcp.server.mcpserver.exceptions import ToolError
     with pytest.raises(ToolError, match="box or cylinder"):
         s.add_modifier("B", kind="negative", shape="sphere")
+
+
+@needs_bambu
+def test_user_filament_presets(tmp_path, monkeypatch):
+    import json
+
+    from unofficial_bambu_mcp import presets
+    monkeypatch.setenv("BAMBU_STUDIO_DATA", str(tmp_path))
+    monkeypatch.setattr(presets, "BACKUPS", str(tmp_path / "backups"))
+    (tmp_path / "user" / "123" / "filament").mkdir(parents=True)
+    (tmp_path / "BambuStudio.conf").write_text(json.dumps({"app": {"preset_folder": "123"}}))
+    presets.refresh()
+    m = "Bambu Lab P1S 0.4 nozzle"
+    try:
+        # a new filament, like Create Filament: no parent, its own id, listed for AMS slots
+        path, name, fid = presets.write_user_filament("Test PLA X", "Generic PLA", {"nozzle_temperature": "215"}, machine=m)
+        d = json.load(open(path))
+        assert name == f"Test PLA X @{m}" and d["inherits"] == "" and d["compatible_printers"] == [m]
+        assert fid.startswith("P") and len(fid) == 8 and d["filament_id"] == fid
+        assert d["nozzle_temperature"] == ["215"] and d["filament_type"] == ["PLA"]
+        assert presets.filament_for("Test PLA X", m) == name
+        with pytest.raises(presets.PresetError):
+            presets.write_user_filament("Test PLA X", "Generic PLA", {}, machine=m)
+        # after a calibration: same file, same id, old one backed up
+        p2, _, fid2 = presets.write_user_filament("Test PLA X", name, {"filament_flow_ratio": "0.95"}, machine=m, replace=True)
+        d2 = json.load(open(p2))
+        assert p2 == path and fid2 == fid and d2["filament_flow_ratio"] == ["0.95"] and d2["nozzle_temperature"] == ["215"]
+        assert len(list((tmp_path / "backups").iterdir())) == 1
+        # a tweak of a Bambu filament stays a child of it, so RFID spools still match
+        p3, _, fid3 = presets.write_user_filament("My Bambu PLA", "Bambu PLA Basic @BBL P1S 0.4 nozzle", {"nozzle_temperature": "225"})
+        d3 = json.load(open(p3))
+        assert fid3 is None and d3["inherits"] == "Bambu PLA Basic @BBL P1S 0.4 nozzle" and "filament_id" not in d3
+    finally:
+        monkeypatch.undo()
+        presets.refresh()

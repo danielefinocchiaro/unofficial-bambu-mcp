@@ -899,28 +899,40 @@ def make_pa_tower(filament: int = 1, start: float = 0.0, end: float = 0.06, step
 
 
 @tool()
-def save_filament_preset(slot: int, name: str) -> dict:
+def save_filament_preset(slot: int, name: str, replace: bool = False) -> dict:
     """Save the filament of a slot, with this project's changes for that slot (temperatures, flow ratio, plate
-    temperatures...), as a new Bambu Studio user preset. It appears in Bambu Studio after a restart and can be
-    picked for an AMS slot. Never overwrites an existing preset."""
+    temperatures...), as a Bambu Studio user preset; it appears after Bambu Studio restarts.
+    A new filament (made from a Generic preset, or with another filament_vendor) is saved like Bambu Studio's
+    Create Filament does: its own filament id, so it can be picked for an AMS slot (Device > AMS). Changes to a
+    Bambu filament are saved as a variant of it, so its RFID spools still match it.
+    replace=True updates an existing user preset with that name (e.g. after a calibration): it keeps its
+    filament id, so AMS slots set to it stay valid, and a backup copy is kept. Never overwrites otherwise."""
     pr = P()
     if not 1 <= slot <= len(pr.filaments):
         raise ValueError(f"slot must be 1..{len(pr.filaments)}")
     preset = pr.filaments[slot - 1][0]
     values = {}
-    if presets.source("filament", preset) == "user":
-        own = presets.raw("filament", preset)
-        values.update({k: (v[0] if isinstance(v, list) and v else v) for k, v in own.items() if k not in presets.META
-                       and k != "filament_extruder_variant"})
     fkeys = set(presets.settings("filament", preset))
     for k, v in pr.overrides.items():
         if k in fkeys:
             values[k] = v[slot - 1] if isinstance(v, list) and len(v) >= slot else v
-    if not values:
+    base = presets.flat("filament", preset)
+    own = presets.source("filament", preset) == "user"
+    if own and not replace and presets.raw("filament", preset).get("inherits"):
+        values = {**{k: (v[0] if isinstance(v, list) and v else v) for k, v in presets.raw("filament", preset).items()
+                     if k not in presets.META and k != "filament_extruder_variant"}, **values}
+    if not values and not replace:
         raise ValueError("this slot has no changes to save: use set_setting(..., slot=N) first")
-    path = presets.write_user_filament(name, preset, values)
-    return {"saved": path, "inherits": preset, "values": values,
-            "note": "restart Bambu Studio to see it, then pick it for the AMS slot"}
+    vendor = (base.get("filament_vendor") or [""])[0]
+    new_filament = vendor == "Generic" or values.get("filament_vendor", vendor) != vendor or (own and not base.get("inherits"))
+    path, saved, fid = presets.write_user_filament(name, preset, values, machine=pr.machine if new_filament else None,
+                                                   replace=replace)
+    res = {"saved": path, "name": saved, "values": values}
+    if fid:
+        res["filament_id"] = fid
+    res["note"] = ("restart Bambu Studio to see it" + ("; it is listed for AMS slots (Device > AMS) as "
+                   f"'{saved.split(' @')[0]}'" if new_filament or fid else "; it matches the spools of " + preset))
+    return res
 
 
 # ---------------------------------------------------------------- Bambu Studio sync

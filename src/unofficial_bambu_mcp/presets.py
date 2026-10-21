@@ -4,8 +4,11 @@ The CLI does not follow "inherits"/"include" when it loads a project, so a proje
 flattened values. This module flattens presets and picks the right filament preset for a printer.
 """
 import glob
+import hashlib
 import json
 import os
+import shutil
+import time
 from functools import lru_cache
 
 from . import studio
@@ -64,6 +67,13 @@ def raw(kind, name):
         raise PresetError(f"no {kind} preset named '{name}'")
     with open(hit[0], encoding="utf-8") as f:
         return json.load(f)
+
+
+def path_of(kind, name):
+    hit = _index().get((kind, name))
+    if not hit:
+        raise PresetError(f"no {kind} preset named '{name}'")
+    return hit[0]
 
 
 def source(kind, name):
@@ -252,33 +262,97 @@ def line_for_filament_id(fid):
     return _fid_index().get(fid)
 
 
-def write_user_filament(name, base, values):
-    """Save a new Bambu Studio user filament preset `name` inheriting from the system preset `base`, with `values`
-    (key -> single value). Never overwrites: returns the path, or raises if a preset with that name exists.
-    Bambu Studio loads it at the next start."""
+BACKUPS = os.path.expanduser("~/.config/unofficial-bambu-mcp/preset-backups")
+
+
+def _list_value(cur, v):
+    """A value in the shape the preset uses: one entry per extruder variant, or a plain string."""
+    if isinstance(cur, list):
+        return [str(v)] * max(1, len(cur))
+    return str(v)
+
+
+def _filament_ids():
+    ids = set()
+    for (kind, _), (p, _) in _index().items():
+        if kind != "filament":
+            continue
+        try:
+            with open(p, encoding="utf-8") as f:
+                fid = json.load(f).get("filament_id")
+        except (OSError, ValueError):
+            continue
+        if fid:
+            ids.add(fid)
+    return ids
+
+
+def new_filament_id(name):
+    """Id for a new filament, made like Bambu Studio's Create Filament: 'P' + 7 hex digits, not used yet."""
+    taken, seed, k = _filament_ids(), f"{name}@{studio.user_id() or ''}", 0
+    fid = "P" + hashlib.md5(seed.encode()).hexdigest()[:7]
+    while fid in taken:
+        k += 1
+        fid = "P" + hashlib.md5(f"{seed}#{k}".encode()).hexdigest()[:7]
+    return fid
+
+
+def _write(path, out):
+    ver = studio.version() or "02.08.00.00"
+    out["version"] = ".".join(str(int(x)) for x in ver.split("."))
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(dict(sorted(out.items())), f, indent=4)
+    refresh()
+    return path
+
+
+def write_user_filament(name, base, values, machine=None, replace=False):
+    """Save a Bambu Studio user filament preset with `values` (key -> single value); it loads at the next start.
+    machine given: a new filament of its own, as Create Filament makes it ('<name> @<machine>', full settings,
+    own filament_id, no parent), which Bambu Studio lists for AMS slots. Otherwise a variant of the system
+    preset `base` (inherits it, keeps its filament id, so RFID spools of that filament still match).
+    replace: update the existing user preset `name` in place (same filament id, so AMS slots set to it stay
+    valid); the old file is copied to ~/.config/unofficial-bambu-mcp/preset-backups first.
+    Returns (path, saved name, filament_id or None)."""
+    folder = studio.user_dir("filament")
+    if not folder:
+        raise PresetError("Bambu Studio user preset folder not found (sign in to Bambu Studio once)")
+    full = f"{name} @{machine}" if machine and " @" not in name else name
+    target = next((n for n in (name, full) if exists("filament", n)), None)
+    if target and not replace:
+        raise PresetError(f"a filament preset named '{target}' already exists: choose another name, or replace=True")
+    if replace:
+        if not target or source("filament", target) != "user":
+            raise PresetError(f"there is no user filament preset '{name}' to replace")
+        old = raw("filament", target)
+        path = path_of("filament", target)
+        os.makedirs(BACKUPS, exist_ok=True)
+        shutil.copy2(path, os.path.join(BACKUPS, f"{os.path.basename(path)[:-5]} {time.strftime('%Y%m%d-%H%M%S')}.json"))
+        out = dict(old)
+        ref = flat("filament", target)
+        for k, v in values.items():
+            out[k] = _list_value(ref.get(k), v)
+        return _write(path, out), target, out.get("filament_id") or ref.get("filament_id")
+    if machine:
+        fl = flat("filament", base)
+        out = {k: v for k, v in fl.items() if k not in META}
+        for k, v in values.items():
+            out[k] = _list_value(fl.get(k), v)
+        fid = new_filament_id(name)
+        out.update({"name": full, "filament_settings_id": [full], "from": "User", "inherits": "",
+                    "filament_id": fid, "compatible_printers": [machine]})
+        return _write(os.path.join(folder, full.replace("/", "-") + ".json"), out), full, fid
     if source("filament", base) == "user":
         base = raw("filament", base).get("inherits") or base
     if source("filament", base) != "system":
         raise PresetError(f"'{base}' is not a system filament preset")
-    if exists("filament", name):
-        raise PresetError(f"a filament preset named '{name}' already exists: choose another name")
-    folder = studio.user_dir("filament")
-    if not folder:
-        raise PresetError("Bambu Studio user preset folder not found (sign in to Bambu Studio once)")
     fl = flat("filament", base)
     out = {"filament_settings_id": [name], "from": "User", "inherits": base, "name": name}
     if "filament_extruder_variant" in fl:
         out["filament_extruder_variant"] = fl["filament_extruder_variant"]
     for k, v in values.items():
-        cur = fl.get(k)
-        out[k] = [str(v)] * len(cur) if isinstance(cur, list) and cur else ([str(v)] if isinstance(cur, list) else str(v))
-    ver = studio.version() or "02.08.00.00"
-    out["version"] = ".".join(str(int(x)) for x in ver.split("."))
-    os.makedirs(folder, exist_ok=True)
+        out[k] = _list_value(fl.get(k), v)
     path = os.path.join(folder, name.replace("/", "-") + ".json")
     if os.path.exists(path):
         raise PresetError(f"{path} already exists")
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(dict(sorted(out.items())), f, indent=4)
-    refresh()
-    return path
+    return _write(path, out), name, None
