@@ -17,6 +17,8 @@ Added
 - `save_filament_preset`: new filaments saved like Bambu Studio's Create Filament (own filament id, so they can be
   picked for an AMS slot); `replace=True` updates a preset in place, same id, with a backup.
 - `preview_layer` frames the extrusions by default; slicing reports pauses.
+- Previews darken recesses, so engraved numbers (temperature tower, flow squares) can be read.
+- `scripts/make_demo.py`: the README demo, made by driving the server through an MCP client.
 - New projects use the build plate picked in Bambu Studio for that printer (`build_plate` in the summary).
 
 Fixed
@@ -31,6 +33,7 @@ Fixed
 - Bambu Studio started with a file at cold start no longer stays without a window.
 - AMS spools without RFID that were never set are `unknown`, not empty.
 - Calibration prints: larger, deeper numbers on the temperature tower and the flow squares.
+- `check_print_risks` no longer advises a brim to a part that already has one.
 
 ## 0.2.0 (unreleased)
 

@@ -37,7 +37,8 @@ line leaves empty, and pins the build plate type on the plate.
 ## Previews
 
 Plates are drawn with a small z-buffer rasterizer (numpy and Pillow, flat shading, 2× supersampling): no GPU and no
-OpenGL. Sliced layers are drawn from the G-code moves.
+OpenGL. The depth buffer also darkens pixels surrounded by nearer surfaces, so engraved numbers and holes read apart
+from the face around them. Sliced layers are drawn from the G-code moves.
 
 ## Printer
 

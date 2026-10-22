@@ -16,6 +16,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Multimedia :: Graphics :: 3D Modeling",
     "Topic :: Printing",
 ]
@@ -40,6 +41,9 @@ unofficial-bambu-mcp = "unofficial_bambu_mcp.server:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.sdist]
+exclude = ["docs/*.gif", "docs/*.png"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/unofficial_bambu_mcp"]

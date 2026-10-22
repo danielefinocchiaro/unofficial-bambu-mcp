@@ -1,0 +1,29 @@
+name: release
+# Runs only when a GitHub release is published (tag vX.Y.Z): PyPI first, then the MCP Registry, which checks the
+# package on PyPI. PyPI needs a trusted publisher for this repository and workflow (environment "pypi").
+on:
+  release:
+    types: [published]
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write          # PyPI trusted publishing and MCP Registry login, both by OIDC
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Versions match the tag
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          grep -q "^version = \"$tag\"" pyproject.toml
+          python3 -c "import json,sys; d=json.load(open('server.json')); sys.exit(not (d['version'] == d['packages'][0]['version'] == '$tag'))"
+      - run: uv sync && uv run ruff check . && uv run pytest -q
+      - run: uv build
+      - run: uv publish --trusted-publishing always
+      - name: MCP Registry
+        run: |
+          curl -sL https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_linux_amd64.tar.gz | tar xz mcp-publisher
+          ./mcp-publisher login github-oidc
+          for i in 1 2 3 4 5; do ./mcp-publisher publish && exit 0; sleep 60; done; exit 1

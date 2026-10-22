@@ -1,0 +1,39 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.danielefinocchiaro/unofficial-bambu-mcp",
+  "title": "Bambu Studio (unofficial)",
+  "description": "Build, edit, slice, check and calibrate Bambu Studio projects; read a Bambu Lab printer's status.",
+  "repository": {
+    "url": "https://github.com/danielefinocchiaro/unofficial-bambu-mcp",
+    "source": "github"
+  },
+  "version": "0.3.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "unofficial-bambu-mcp",
+      "version": "0.3.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "UBMCP_DIR",
+          "description": "Where projects, sliced files and print files are saved (default ~/Documents/unofficial-bambu-mcp)",
+          "isRequired": false
+        },
+        {
+          "name": "BAMBU_STUDIO_EXE",
+          "description": "Path of the Bambu Studio executable, if it is not found automatically",
+          "isRequired": false
+        },
+        {
+          "name": "BAMBU_PRINTER_IP",
+          "description": "Printer IP address, to skip the search on the local network",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}

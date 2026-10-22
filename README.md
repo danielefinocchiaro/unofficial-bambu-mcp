@@ -1,5 +1,7 @@
 # unofficial-bambu-mcp
 
+<!-- mcp-name: io.github.danielefinocchiaro/unofficial-bambu-mcp -->
+
 [![ci](https://github.com/danielefinocchiaro/unofficial-bambu-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/danielefinocchiaro/unofficial-bambu-mcp/actions/workflows/ci.yml)
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
@@ -19,6 +21,11 @@ You talk, it does the slicer work:
 - *"Before I start this 20-hour plate: which parts are likely to come off?"*
 - *"A pin came off at layer 4 and I skipped it: make me a project to reprint just that pin, with a brim."*
 - *"How is the print going? Which spool is it feeding from?"*
+
+![A session: a project from scratch, a print risk fixed, slicing, a temperature tower, the print file](https://github.com/danielefinocchiaro/unofficial-bambu-mcp/raw/main/docs/demo.gif)
+
+<sub>A real session, sped up: every tool call, result and image comes from the server through MCP; only the requests
+are written for the demo ([scripts/make_demo.py](scripts/make_demo.py)).</sub>
 
 ## What it can do
 
@@ -116,7 +123,8 @@ flattened the way the app does. Details in [docs/how-it-works.md](docs/how-it-wo
   the server re-reads it on the next command (and tells you if both sides changed).
 - **Safe with your files.** Nothing is ever overwritten: saving adds `-2`, `-3`... and opened files are read as a
   copy. Updating one of your filament presets keeps a backup copy first.
-- **Light.** numpy, shapely, manifold3d, fonttools and Pillow. No Bambu profile is shipped with this repository.
+- **Light.** numpy, shapely, manifold3d, fonttools and Pillow. No Bambu profile is shipped with this repository:
+  presets come from your installation (the server only carries default values for settings that presets leave out).
 - **Your printer, your call.** The LAN access code is read from Bambu Studio when needed and never copied
   anywhere. See [SECURITY.md](SECURITY.md).
 
@@ -126,6 +134,7 @@ flattened the way the app does. Details in [docs/how-it-works.md](docs/how-it-wo
 - [Printing and printer status](docs/printing.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [How it works](docs/how-it-works.md)
+- [Driving a closed slicer from an AI assistant](docs/paper.md): a technical write-up of the design and the tests
 
 ## Limitations
 
@@ -146,7 +155,8 @@ flattened the way the app does. Details in [docs/how-it-works.md](docs/how-it-wo
 Bug reports, ideas and pull requests: [GitHub Issues](../../issues). Include your OS, Bambu Studio version,
 printer and, if you can, the .3mf that fails. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Author: Daniele Finocchiaro — [danielefinocchiaro.com](https://danielefinocchiaro.com)
+Author: Daniele Finocchiaro — [danielefinocchiaro.com](https://danielefinocchiaro.com). If it saves you prints
+and time: [buy me a coffee](https://buymeacoffee.com/danifinocchiaro).
 
 ## License
 

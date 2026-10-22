@@ -44,3 +44,7 @@ assistant does.
 
 One topic per pull request, with tests when you change behavior, `ruff` and `pytest` green, and an entry in
 `CHANGELOG.md`. Say on what you tested it (OS, Bambu Studio version, printer).
+
+## Releases
+
+See [docs/releasing.md](docs/releasing.md).
