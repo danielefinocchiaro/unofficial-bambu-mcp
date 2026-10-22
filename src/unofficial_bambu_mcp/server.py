@@ -669,7 +669,8 @@ def check_print_risks(plate: int = 0) -> list:
             brim = o.settings.get("brim_type") or cfg.get("brim_type") or "auto_brim"
             area, width, piece = _footing(o)
             why = []
-            if h >= 40 and h / max(min(w, d), 0.1) >= 4:
+            slender = h >= 40 and h / max(min(w, d), 0.1) >= 4
+            if slender:
                 why.append(f"{h:.0f} mm high on a {min(w, d):.0f} mm side")
             if brim in ("no_brim", "auto_brim"):
                 if area < 1:
@@ -679,12 +680,15 @@ def check_print_risks(plate: int = 0) -> list:
                 elif piece < 250:
                     why.append(f"a piece holds on {piece:.0f} mm² of the bed only")
             if why:
-                fix = "give it an outer brim: set_object_setting(object, 'brim_type', 'outer_only')"
-                if h >= 40 and h / max(min(w, d), 0.1) >= 4:
-                    fix += "; or lay it down / cut it, and avoid sport speed"
-                risks.append({"object": o.name, "id": o.uid, "risk": "; ".join(why) +
-                              (", no brim" if brim == "no_brim" else (", brim left to auto" if brim == "auto_brim" else "")),
-                              "advice": fix})
+                if brim in ("no_brim", "auto_brim"):
+                    fix = "give it an outer brim: set_object_setting(object, 'brim_type', 'outer_only')"
+                    if slender:
+                        fix += "; or lay it down / cut it, and avoid sport speed"
+                    has = ", no brim" if brim == "no_brim" else ", brim left to auto"
+                else:
+                    fix = "it has a brim; if it can lie down or be cut, print it that way, and avoid sport speed"
+                    has = f", brim {brim}"
+                risks.append({"object": o.name, "id": o.uid, "risk": "; ".join(why) + has, "advice": fix})
             if h >= 120:
                 tall.append(o.name)
         used = sorted({f for o in pl.objects for f in o.filaments()})

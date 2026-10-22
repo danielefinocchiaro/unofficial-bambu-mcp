@@ -59,6 +59,15 @@ def test_rasterize_nearest_wins():
         assert tuple(colors[10 * 100 + 10]) == (0, 0, 255) and not covered[99 * 100 + 99]
 
 
+def test_occlusion_darkens_engraving_floor():
+    # a face at depth 5 with a 1 mm deep pit in the middle: the pit is darker, the open face and background are not
+    D = np.full((60, 60), -np.inf)
+    D[10:50, 10:50] = 5.0
+    D[27:33, 27:33] = 4.0
+    shade = preview._occlusion(D.reshape(-1), 60, 60, px_per_mm=4).reshape(60, 60)
+    assert shade[30, 30] < 0.8 and shade[15, 15] == 1.0 and shade[0, 0] == 1.0
+
+
 @pytest.mark.parametrize("code,slot", [("4", 1), ("8", 2), ("0C", 3), ("1C", 4), ("2C", 5), ("5", None), ("", None)])
 def test_paint_slot(code, slot):
     assert preview._paint_slot(code) == slot
@@ -510,3 +519,19 @@ def test_check_print_risks(tmp_path, monkeypatch):
     s.set_object_setting("peg", "brim_type", "outer_only")
     (r,) = s.check_print_risks(1)
     assert {x["object"] for x in r["risks"] if "object" in x} == {"pole"}
+    s.set_object_setting("pole", "brim_type", "outer_only")
+    (r,) = s.check_print_risks(1)
+    (pole,) = r["risks"]
+    assert pole["risk"].endswith("brim outer_only") and "give it an outer brim" not in pole["advice"]
+
+
+def test_release_metadata_agree():
+    # pyproject, server.json (MCP Registry) and the README marker the registry checks on PyPI must agree
+    import json
+    import re
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+    version = re.search(r'^version = "([^"]+)"', (root / "pyproject.toml").read_text(), re.M).group(1)
+    server = json.loads((root / "server.json").read_text())
+    assert server["version"] == server["packages"][0]["version"] == version
+    assert f"<!-- mcp-name: {server['name']} -->" in (root / "README.md").read_text()

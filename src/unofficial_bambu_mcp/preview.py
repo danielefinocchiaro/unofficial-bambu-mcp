@@ -31,10 +31,11 @@ def _view(points, view):
     return np.column_stack([u, v, d])
 
 
-def _rasterize(px, z, rgb, W, H, budget=2_000_000):
+def _rasterize(px, z, rgb, W, H, budget=2_000_000, depth=False):
     """Z-buffer: for each pixel the color of the nearest triangle (larger z = nearer). Sorting triangles by
     their center (painter's algorithm) fails where big faces lie under small ones: text on a tag, parts.
-    px: (n, 3, 2) pixel coordinates, z: (n, 3) depths, rgb: (n, 3). Returns (covered mask, colors), flat."""
+    px: (n, 3, 2) pixel coordinates, z: (n, 3) depths, rgb: (n, 3). Returns (covered mask, colors), flat,
+    and the depth buffer too if depth=True."""
     zbuf = np.full(W * H, -np.inf)
     cbuf = np.zeros((W * H, 3), np.uint8)
     (x0, y0), (x1, y1), (x2, y2) = px[:, 0].T, px[:, 1].T, px[:, 2].T
@@ -77,7 +78,29 @@ def _rasterize(px, z, rgb, W, H, budget=2_000_000):
         zbuf[pix[near]] = d[near]
         cbuf[pix[near]] = rgb[t[near]]
         i = j
+    if depth:
+        return np.isfinite(zbuf), cbuf, zbuf
     return np.isfinite(zbuf), cbuf
+
+
+def _occlusion(zbuf, W, H, px_per_mm):
+    """Shade factor per pixel (flat): darker where nearby surfaces stand 0.3-4 mm nearer to the viewer, so the
+    floor of engraved digits and holes reads apart from the face around it (flat shading gives both one color)."""
+    D = zbuf.reshape(H, W)
+    near = np.zeros((H, W))
+    k = 0
+    for r_mm in (0.8, 1.6):
+        r = max(1, int(round(r_mm * px_per_mm)))
+        for a in np.linspace(0, 2 * math.pi, 12, endpoint=False):
+            dx, dy = int(round(r * math.cos(a))), int(round(r * math.sin(a)))
+            sh = np.full((H, W), -np.inf)
+            sh[max(dy, 0):H + min(dy, 0), max(dx, 0):W + min(dx, 0)] = \
+                D[max(-dy, 0):H + min(-dy, 0), max(-dx, 0):W + min(-dx, 0)]
+            with np.errstate(invalid="ignore"):         # -inf - -inf where both are background
+                diff = sh - D
+            near += (diff > 0.3) & (diff < 4)
+            k += 1
+    return (1 - 0.6 * near / k).reshape(-1)
 
 
 def render_plate(project, plate_index, view="iso", size=900, label=True, zoom=False, object_labels=False):
@@ -167,9 +190,10 @@ def render_plate(project, plate_index, view="iso", size=900, label=True, zoom=Fa
         px = to_px(P.reshape(-1, 3)[:, :2]).reshape(-1, 3, 2)
         base = np.maximum(C, 58.0)                     # very dark filaments: keep the shading readable
         rgb = np.clip(base * shade[:, None], 0, 255).astype(np.uint8)
-        covered, colors = _rasterize(px, P[:, :, 2], rgb, W, H)
+        covered, colors, zbuf = _rasterize(px, P[:, :, 2], rgb, W, H, depth=True)
+        shade = _occlusion(zbuf, W, H, sc)
         arr = np.asarray(img).reshape(-1, 3).copy()
-        arr[covered] = colors[covered]
+        arr[covered] = (colors[covered] * shade[covered, None]).astype(np.uint8)
         img = Image.fromarray(arr.reshape(H, W, 3))
     img = img.resize((size, size), Image.LANCZOS)
     if object_labels and pl.objects:
