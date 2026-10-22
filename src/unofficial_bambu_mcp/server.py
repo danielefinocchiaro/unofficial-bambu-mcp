@@ -5,6 +5,8 @@ Unofficial community project, not affiliated with or endorsed by Bambu Lab.
 import functools
 import os
 import zipfile
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 
 import numpy as np
 from mcp.server.mcpserver import Image, MCPServer
@@ -22,7 +24,12 @@ Files are never overwritten: saving picks a new name if the file exists. Opened 
 Always look at preview_plate after changing the layout, and report slicing warnings to the user.
 send_to_printer never starts a print: it opens an official Bambu app where the user presses Print/Send."""
 
-mcp = MCPServer("unofficial-bambu-mcp", instructions=INSTRUCTIONS, version="0.1.0")
+try:
+    __version__ = _pkg_version("unofficial-bambu-mcp")
+except PackageNotFoundError:                     # running from a source tree that was not installed
+    __version__ = "0.0.0"
+
+mcp = MCPServer("unofficial-bambu-mcp", instructions=INSTRUCTIONS, version=__version__)
 
 
 def tool():

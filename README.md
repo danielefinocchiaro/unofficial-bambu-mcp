@@ -1,42 +1,75 @@
 # unofficial-bambu-mcp
 
+[![ci](https://github.com/danielefinocchiaro/unofficial-bambu-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/danielefinocchiaro/unofficial-bambu-mcp/actions/workflows/ci.yml)
+![python](https://img.shields.io/badge/python-3.10%2B-blue)
+![license](https://img.shields.io/badge/license-MIT-green)
+
 > **Unofficial community project.** Not affiliated with, endorsed by or supported by Bambu Lab.
-> "Bambu Lab" and "Bambu Studio" are trademarks of their respective owners.
+> "Bambu Lab", "Bambu Studio", "Bambu Connect" and "Bambu Handy" are trademarks of their respective owners.
 
 An [MCP](https://modelcontextprotocol.io) server that lets an AI assistant (Claude Code, Claude Desktop or any
-MCP client) **build, edit, slice and preview Bambu Studio projects**: plates, objects, multi-color AMS
-assignments, presets and settings, using the official Bambu Studio you already have installed.
+MCP client) **build, edit, slice, check and calibrate Bambu Studio projects**, using the official Bambu Studio
+you already have installed, and **read your printer's status** on the local network.
 
 You talk, it does the slicer work:
 
-- *"New P1S project: a 20 mm calibration cube and the text 'DANI' on a 2 mm plate, black and white."*
-- *"Open `~/Downloads/Gnome 3 Color.3mf`, add a second plate with two more gnomes, then convert it for the A1 mini."*
-- *"Put eSUN PLA+ in slot 2 with the Textured PEI plate at 65 °C on the first layer, slice and tell me time and grams."*
-- *"Show me layer 1 of plate 2."* / *"Make a 0.8 mm first-layer test of plate 1."*
+- *"New P1S project: a 20 mm cube and the text 'DANI' in white on a black 2 mm tag."*
+- *"Open `~/Downloads/Gnome 3 Color.3mf`, add a plate with two more gnomes, then convert it for the A1 mini."*
+- *"I have eSUN PLA Basic in AMS slot 2: make a preset for it and the test prints to calibrate it."*
+- *"Before I start this 20-hour plate: which parts are likely to come off?"*
+- *"A pin came off at layer 4 and I skipped it: make me a project to reprint just that pin, with a brim."*
+- *"How is the print going? Which spool is it feeding from?"*
 
-## Features
+## What it can do
 
 | Area | What you can do |
 |---|---|
-| Projects | Create a project, or **open any .3mf** saved by Bambu Studio or downloaded from MakerWorld: painted colors, modifiers, per-object settings and multiple instances are kept. Save without ever overwriting. |
-| Printers | P1S, P1P, P2S, X1C, X1, X1E, A1, A1 mini, H2S (single nozzle, 0.4) or any machine preset. **Switch printer** and objects are re-arranged for the new bed (e.g. P1S → A1 mini). |
-| Filaments | AMS slots with preset and color. Filament names are matched to the printer ("eSUN PLA+" → the P1S or A1 mini preset). Your own user presets work too. |
-| Plates & objects | Add, rename, remove plates. Import STL, OBJ, 3MF. Boxes, cylinders, cones, spheres and **text**. Move, rotate, scale, **mirror**, **lay flat** on the biggest face, **cut** at a height, duplicate, **auto-arrange**, filament per object or per part, per-object settings, closed-solid check. |
-| Modifiers | Box modifiers with their own settings ("the top 5 mm at 100% infill"), negative parts, support blockers and enforcers, on the whole object or a region. |
-| Settings | Read or change any Bambu Studio setting, per filament slot when it applies (e.g. plate temperatures). Presets are resolved like Bambu Studio does (`inherits`, `include`). |
-| Slicing | Uses the Bambu Studio command line: time, grams per filament, filament changes, layers and warnings for every plate. |
-| Previews | Images of a plate (iso or top, zoom on the objects, painted colors shown) and of any **sliced layer**, so the assistant can check its own work. |
-| Test prints | Generate a plate with the first N mm of a model to check bed adhesion before a long print. |
-| Calibration | **Temperature tower** (temperature engraved on each block), **flow rate test** (per-object flow, percentage engraved on top, pass 1 and pass 2) and **pressure advance tower** (K changes every millimeter), **max volumetric speed test** and **retraction (stringing) test**, for any filament, Bambu or not. Save the result as a **Bambu Studio user preset**. |
-| Layer actions | **Pause** at a height (magnets, nuts), **filament change** at a height (AMS), or any G-code at a height. Kept when you open and save Bambu Studio projects. |
-| Printing *(experimental)* | `send_to_printer` exports a plate as `.gcode.3mf` and opens it in **Bambu Connect** (official URL scheme) or **Bambu Studio**, where you check the AMS mapping and press Print. Nothing starts by itself, and the printer stays in cloud mode, so Bambu Handy keeps working. |
-| Printer status *(experimental)* | `printer_status` reads state, progress, remaining time, temperatures, AMS trays and errors on the local network, read-only. `use_ams_filaments` sets the project slots from what is loaded in the AMS. It uses the LAN access code Bambu Studio already saved, and finds the printer by itself. |
+| Projects | Create a project, or **open any .3mf** saved by Bambu Studio (2.x and older 1.6/1.7 files) or downloaded from MakerWorld / Printables: painted colors, modifiers, per-object settings, instances and plates are kept. Save without ever overwriting. |
+| Printers | P1S, P1P, P2S, X1C, X1, X1E, A1, A1 mini, H2S (single nozzle) or any machine preset. **Switch printer** and objects are re-arranged for the new bed. New projects use the build plate you picked in Bambu Studio for that printer. |
+| Filaments | AMS slots with preset and color, your own user presets included. `use_ams_filaments` takes what is loaded in the AMS right now. |
+| Plates & objects | Import STL, OBJ, 3MF; boxes, cylinders, cones, spheres and **text** (with a base in another color). Move, rotate, scale, **mirror**, **lay flat**, **cut**, duplicate, **auto-arrange**, filament per object or part, per-object settings, closed-solid check. Object ids stay the same while you work. |
+| Modifiers | Box or **round** parts: modifiers with their own settings ("the top 5 mm at 100 % infill"), negative parts (holes for magnets and screws), support blockers and enforcers. |
+| Settings | Read or change any Bambu Studio setting, per filament slot when it applies, with a warning when a value cannot apply (e.g. a textured-plate temperature on a smooth plate). |
+| Slicing | Bambu Studio command line: time, grams per filament, filament changes, pauses, layers and warnings per plate. Empty plates are skipped. |
+| Previews | Images of a plate (iso or top, zoom, painted colors, **object labels**) and of any **sliced layer**, so the assistant checks its own work. |
+| Print risks | `check_print_risks`: tall and narrow parts, parts standing on a tiny or narrow footing without a brim, filaments not meant for the build plate, tall parts sharing a long plate. |
+| Reprints | `reprint_objects`: a new project with only the parts that failed, same settings, with a brim. |
+| Calibration | **Temperature tower**, **flow rate test** (pass 1 and 2), **pressure advance tower**, **max volumetric speed test**, **retraction test**, **first-layer test**, for any filament. Save the result as a **Bambu Studio filament preset**: a new filament gets its own id, like Bambu Studio's *Create Filament*, so you can pick it for an AMS slot; updating it later keeps that id. |
+| Layer actions | **Pause** at a height (magnets, nuts), **filament change** at a height, or any G-code at a height. |
+| Printing | `send_to_printer` makes the print file of a plate and opens it in **Bambu Studio** (or **Bambu Connect**) ready to print: you check the AMS mapping and press Print. |
+| Printer status | `printer_status` (read only, local network): state, progress, temperatures, AMS trays with humidity, skipped objects, and warnings (unknown spool being fed, sport speed on a long print). |
 
-The full list of tools with their parameters is in [docs/TOOLS.md](docs/TOOLS.md).
+All 50 tools with their parameters: [docs/TOOLS.md](docs/TOOLS.md).
+
+## Tested on real hardware
+
+macOS, Bambu Studio 2.8.2, a **P1S with two AMS units**, in normal cloud mode:
+
+- every tool through a real MCP client, on projects made from scratch and on MakerWorld / Printables downloads
+  (painted 6-color models, multi-part assemblies, 3-plate projects, files from Bambu Studio 1.6 and 1.7);
+- printed: temperature towers and flow tests for two third-party filaments (eSUN PLA Basic black and white), whose
+  presets were made and tuned through the server; the print hand-off to Bambu Studio; live status during prints.
+
+The pressure advance tower, the max volumetric speed test and the retraction test are checked by slicing (the G-code
+is inspected) but have not been printed yet. Windows and Linux paths exist but are **not tested**.
+
+## Printing and your printer
+
+Bambu firmware (2025 and later) accepts commands from other programs only when the printer is in **LAN-only mode
+with Developer Mode** on, which turns off the cloud and Bambu Handy. In normal cloud mode it refuses them, so this
+server:
+
+- **reads** the printer status (allowed in cloud mode), with the LAN access code Bambu Studio already saved;
+- **hands the print over** to Bambu Studio or Bambu Connect, where you press Print;
+- does **not** start prints, set AMS slots or skip objects on its own: you do that in Bambu Studio, Bambu Handy or on
+  the printer. (Direct LAN printing for printers in Developer Mode exists on the `lan-print` branch and is not part
+  of releases yet.)
+
+More in [docs/printing.md](docs/printing.md).
 
 ## Quick start
 
-Requirements: macOS (tested), Python 3.10+, [uv](https://docs.astral.sh/uv/) and Bambu Studio.
+Requirements: Python 3.10+, [uv](https://docs.astral.sh/uv/) and Bambu Studio.
 
 ```bash
 git clone https://github.com/danielefinocchiaro/unofficial-bambu-mcp
@@ -68,46 +101,50 @@ Then ask: *"What version of Bambu Studio do I have, and which printers can you u
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `UBMCP_DIR` | `~/Documents/unofficial-bambu-mcp` | Where projects, sliced files and exports are saved |
+| `UBMCP_DIR` | `~/Documents/unofficial-bambu-mcp` | Where projects, sliced files and print files are saved |
 | `BAMBU_STUDIO_EXE` | auto-detected | Path of the Bambu Studio executable |
 | `BAMBU_STUDIO_DATA` | auto-detected | Bambu Studio data folder (with `system/` and `user/`) |
+| `BAMBU_PRINTER_SERIAL`, `BAMBU_PRINTER_ACCESS_CODE`, `BAMBU_PRINTER_IP` | from Bambu Studio | Printer for `printer_status`, if you do not want it read from Bambu Studio |
 
 ## How it works
 
-Bambu Studio has no plugin or scripting API. This server works on the **project file** (.3mf, the same format
-Bambu Studio saves) and calls the **Bambu Studio command line** to slice. Presets are read from your Bambu Studio
-installation and flattened the way the app does, because the command line does not resolve them.
+Bambu Studio has no plugin or scripting API. This server works on the **project file** (.3mf, the format Bambu
+Studio saves) and calls the **Bambu Studio command line** to slice. Presets are read from your installation and
+flattened the way the app does. Details in [docs/how-it-works.md](docs/how-it-works.md).
 
-- **Not live, but in sync.** Changes are written to a file. `open_in_bambu_studio` shows the result in the app
-  window, which reloads the project instead of moving objects in real time. If you edit the project by hand in
-  Bambu Studio and save it, the server re-reads it on the next command (and tells you if both sides changed).
-- **Safe with your files.** Nothing is ever overwritten: saving adds `-2`, `-3`... if a file exists, and opened
-  projects are read as a copy.
+- **In sync with the app.** `open_in_bambu_studio` shows a project in the app; if you change it there and save,
+  the server re-reads it on the next command (and tells you if both sides changed).
+- **Safe with your files.** Nothing is ever overwritten: saving adds `-2`, `-3`... and opened files are read as a
+  copy. Updating one of your filament presets keeps a backup copy first.
 - **Light.** numpy, shapely, manifold3d, fonttools and Pillow. No Bambu profile is shipped with this repository.
-- **Your printer, your call.** No print, motion or setting command is ever sent to the printer. Status is read with
-  the access code Bambu Studio stores locally; the code is read when needed and never copied anywhere.
+- **Your printer, your call.** The LAN access code is read from Bambu Studio when needed and never copied
+  anywhere. See [SECURITY.md](SECURITY.md).
 
-## Status and limitations
+## Guides
 
-- **Experimental on this branch:** printing hand-off and printer status are written against Bambu's documented
-  behavior but not yet tested on a real printer.
+- [Calibrating a filament](docs/calibration.md), step by step, with what to look at on each test print
+- [Printing and printer status](docs/printing.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [How it works](docs/how-it-works.md)
 
-- Tested on macOS with Bambu Studio 2.8, on projects made from scratch and on real MakerWorld downloads
-  (multi-plate, painted 6-color models, A1 mini projects).
-- Windows and Linux paths are implemented but **not tested yet**.
-- Single-nozzle printers. Dual-nozzle machines (H2D) need extra settings that are not handled.
+## Limitations
+
+- Single-nozzle printers; dual-nozzle machines (H2D) need settings that are not handled.
 - Variable layer height and height-range modifiers in opened projects are not carried over (you get a warning).
-- The first-layer test copy does not keep painted colors.
-- Text uses a system font (Arial on macOS/Windows, DejaVu on Linux) unless you pass a font file.
+- First-layer tests and cuts do not keep painted colors.
+- Bambu Studio re-slices a project when it opens it; to see a plate sliced and ready to print in the app, use
+  `send_to_printer`.
 
 ## Roadmap
 
+- Direct printing for printers in LAN-only + Developer Mode (`lan-print` branch)
+- Windows and Linux testing; a package on PyPI (`uvx unofficial-bambu-mcp`)
 - A live bridge inside the slicer, to be proposed to OrcaSlicer and Bambu Studio
 
 ## Contributing and support
 
-Bug reports, ideas and pull requests: please use [GitHub Issues](../../issues). Include your OS, Bambu Studio
-version, printer and, if you can, the .3mf that fails. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Bug reports, ideas and pull requests: [GitHub Issues](../../issues). Include your OS, Bambu Studio version,
+printer and, if you can, the .3mf that fails. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Author: Daniele Finocchiaro — [danielefinocchiaro.com](https://danielefinocchiaro.com)
 

@@ -1,0 +1,55 @@
+name: Bug report
+description: A tool fails, gives a wrong result, or Bambu Studio does not accept a file.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you asked the assistant, which tool failed, and the error message.
+      placeholder: |
+        I asked: "open ~/Downloads/x.3mf and slice plate 2"
+        open_project returned: ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: macOS 15.5 / Windows 11 / Ubuntu 24.04
+    validations:
+      required: true
+  - type: input
+    id: studio
+    attributes:
+      label: Bambu Studio version
+      description: The `bambu_status` tool reports it.
+      placeholder: "2.8.2"
+    validations:
+      required: true
+  - type: input
+    id: printer
+    attributes:
+      label: Printer and AMS
+      placeholder: P1S + 2 AMS, cloud mode
+  - type: input
+    id: client
+    attributes:
+      label: MCP client
+      placeholder: Claude Code / Claude Desktop / ...
+  - type: input
+    id: version
+    attributes:
+      label: Server version or commit
+      placeholder: 0.3.0 / a1b2c3d
+  - type: textarea
+    id: files
+    attributes:
+      label: Files
+      description: Attach the .3mf that fails, if you are allowed to share it (zip it if GitHub refuses the extension).

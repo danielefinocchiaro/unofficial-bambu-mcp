@@ -1,12 +1,24 @@
 [project]
 name = "unofficial-bambu-mcp"
-version = "0.1.0"
-description = "Unofficial MCP server to build, edit, slice and preview Bambu Studio projects (.3mf) from an AI assistant."
+version = "0.3.0"
+description = "Unofficial MCP server to build, edit, slice, check and calibrate Bambu Studio projects (.3mf) from an AI assistant."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "Daniele Finocchiaro" }]
-keywords = ["mcp", "bambu lab", "bambu studio", "3d printing", "3mf", "slicer", "claude"]
+keywords = ["mcp", "bambu lab", "bambu studio", "3d printing", "3mf", "slicer", "claude", "calibration"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+    "Topic :: Printing",
+]
 dependencies = [
     "mcp>=2.0",
     "numpy>=1.24",
@@ -15,6 +27,12 @@ dependencies = [
     "manifold3d>=2.4",
     "fonttools>=4.40",
 ]
+
+[project.urls]
+Homepage = "https://github.com/danielefinocchiaro/unofficial-bambu-mcp"
+Documentation = "https://github.com/danielefinocchiaro/unofficial-bambu-mcp/tree/main/docs"
+Issues = "https://github.com/danielefinocchiaro/unofficial-bambu-mcp/issues"
+Changelog = "https://github.com/danielefinocchiaro/unofficial-bambu-mcp/blob/main/CHANGELOG.md"
 
 [project.scripts]
 unofficial-bambu-mcp = "unofficial_bambu_mcp.server:main"
