@@ -1,6 +1,6 @@
 # Tools
 
-50 tools, generated from the server code by `scripts/gen_tools_doc.py`.
+54 tools, generated from the server code by `scripts/gen_tools_doc.py`.
 
 ## `bambu_status`
 
@@ -262,6 +262,28 @@ Drop an override: the setting goes back to the preset value.
 | Parameter | Type | Default |
 |---|---|---|
 | `key` | string | required |
+
+## `get_purge_volumes`
+
+Purge (flush) volumes between filament slots, in mm³, and the multiplier: the filament wasted at each
+change on the prime tower (or into infill/objects, see set_purge_volumes).
+
+## `set_purge_volumes`
+
+Change the purge (flush) volumes, as in Bambu Studio's Purging volumes dialog.
+volumes: [{"from": 1, "to": 2, "volume": 350}, ...] mm³ for single changes; matrix: every value at once,
+rows = from, columns = to (the diagonal is ignored); multiplier: scales all of them (0..3, 1 = as written);
+reset: back to the values estimated from the colors and multiplier 1. A value set by hand stays while both
+slots keep their color. Values are 0..900 mm³. Less purge saves filament but the new color can come out mixed
+at first; to waste less without that, purge into the infill or into an object with
+set_setting('flush_into_infill', '1') or set_object_setting(object, 'flush_into_objects', '1').
+
+| Parameter | Type | Default |
+|---|---|---|
+| `volumes` | array / null | `None` |
+| `matrix` | array / null | `None` |
+| `multiplier` | number | `0` |
+| `reset` | boolean | `False` |
 
 ## `save_project`
 
@@ -537,6 +559,36 @@ Remove a part (e.g. a modifier) from an object, by part name. The last solid par
 |---|---|---|
 | `object` | string | required |
 | `part` | string | required |
+
+## `add_brim_ears`
+
+Brim ears: small round brims only where a part needs them, instead of a brim all around (Bambu Studio's
+Painted brim). Meant for print-in-place and articulated models: a full brim fills the joint gaps on the first
+layer and welds them. Without points, ears go to the tips of the thin parts of the first layer (fingers, toes,
+any tip thinner than `narrow` mm), each as large as possible up to `radius` without reaching another piece, a
+gap or hole, or a second thin part (those tips are listed as skipped, with the reason). small > 0 also gives
+ears to first-layer pieces smaller than that (mm²), at their ends. points: [[x, y], ...] or [[x, y, radius]]
+in plate mm, placed as given, with a warning when one would weld something. radius 0 = Bambu Studio's default
+(16 first-layer line widths across). keep: add to the ears the object already has.
+Look at them with preview_plate(view='top', zoom=True), then slice_project and preview_layer(layer=1).
+
+| Parameter | Type | Default |
+|---|---|---|
+| `object` | string | required |
+| `points` | array / null | `None` |
+| `radius` | number | `0` |
+| `narrow` | number | `3.0` |
+| `small` | number | `0` |
+| `clearance` | number | `0.6` |
+| `keep` | boolean | `False` |
+
+## `remove_brim_ears`
+
+Remove an object's brim ears; its brim goes back to the project's brim type.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `object` | string | required |
 
 ## `make_max_flow_test`
 

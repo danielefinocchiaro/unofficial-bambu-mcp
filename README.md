@@ -37,16 +37,18 @@ are written for the demo ([scripts/make_demo.py](scripts/make_demo.py)).</sub>
 | Plates & objects | Import STL, OBJ, 3MF; boxes, cylinders, cones, spheres and **text** (with a base in another color). Move, rotate, scale, **mirror**, **lay flat**, **cut**, duplicate, **auto-arrange**, filament per object or part, per-object settings, closed-solid check. Object ids stay the same while you work. |
 | Modifiers | Box or **round** parts: modifiers with their own settings ("the top 5 mm at 100 % infill"), negative parts (holes for magnets and screws), support blockers and enforcers. |
 | Settings | Read or change any Bambu Studio setting, per filament slot when it applies, with a warning when a value cannot apply (e.g. a textured-plate temperature on a smooth plate). |
+| Purge volumes | `get_purge_volumes` / `set_purge_volumes`: the purge between each pair of slots and the multiplier, as in Bambu Studio's dialog; the values in opened files are kept. |
 | Slicing | Bambu Studio command line: time, grams per filament, filament changes, pauses, layers and warnings per plate. Empty plates are skipped. |
 | Previews | Images of a plate (iso or top, zoom, painted colors, **object labels**) and of any **sliced layer**, so the assistant checks its own work. |
-| Print risks | `check_print_risks`: tall and narrow parts, parts standing on a tiny or narrow footing without a brim, filaments not meant for the build plate, tall parts sharing a long plate. |
+| Print risks | `check_print_risks`: tall and narrow parts, parts standing on a tiny or narrow footing without a brim, filaments not meant for the build plate, tall parts sharing a long plate, a full brim on a print-in-place model whose joints it would weld. |
+| Brim ears | `add_brim_ears`: small round brims only on the thin tips (fingers, toes) of print-in-place and articulated models, placed automatically away from joint gaps and other pieces, or where you say. Bambu Studio's *Painted* brim, checked on the sliced first layer. |
 | Reprints | `reprint_objects`: a new project with only the parts that failed, same settings, with a brim. |
 | Calibration | **Temperature tower**, **flow rate test** (pass 1 and 2), **pressure advance tower**, **max volumetric speed test**, **retraction test**, **first-layer test**, for any filament. Save the result as a **Bambu Studio filament preset**: a new filament gets its own id, like Bambu Studio's *Create Filament*, so you can pick it for an AMS slot; updating it later keeps that id. |
 | Layer actions | **Pause** at a height (magnets, nuts), **filament change** at a height, or any G-code at a height. |
 | Printing | `send_to_printer` makes the print file of a plate and opens it in **Bambu Studio** (or **Bambu Connect**) ready to print: you check the AMS mapping and press Print. |
 | Printer status | `printer_status` (read only, local network): state, progress, temperatures, AMS trays with humidity, skipped objects, and warnings (unknown spool being fed, sport speed on a long print). |
 
-All 50 tools with their parameters: [docs/TOOLS.md](docs/TOOLS.md).
+All 54 tools with their parameters: [docs/TOOLS.md](docs/TOOLS.md).
 
 ## Tested on real hardware
 

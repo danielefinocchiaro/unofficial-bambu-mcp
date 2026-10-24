@@ -12,7 +12,7 @@ import numpy as np
 from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from . import calibration, geometry, presets, preview, printer, slicer, studio, threemf
+from . import brim, calibration, geometry, presets, preview, printer, slicer, studio, threemf
 from .project import LayerGcode, Obj, Part, Plate, Project, next_free_path
 
 INSTRUCTIONS = """Work on Bambu Studio projects (.3mf) for Bambu Lab printers. Typical flow:
@@ -388,12 +388,15 @@ def transform_object(object: str, scale: float = 1.0, scale_xyz: list[float] | N
     pr = P(True)
     pi, o = pr.find(object)
     f = scale_xyz if scale_xyz else scale
+    dropped = False
     if f != 1.0:
-        o.transform(lambda v: geometry.scale(v, f))
+        dropped |= o.transform(lambda v: geometry.scale(v, f))
     for ang, ax in ((rotate_x, "x"), (rotate_y, "y"), (rotate_z, "z")):
         if ang:
-            o.transform(lambda v, a=ang, axis=ax: geometry.rotate(v, a, axis))
+            dropped |= o.transform(lambda v, a=ang, axis=ax: geometry.rotate(v, a, axis))
     res = {"name": o.name, "size_mm": [round(float(v), 1) for v in o.size()]}
+    if dropped:
+        res["note"] = _EARS_GONE
     if pr.out_of_bed(o):
         res["warning"] = "now (partly) outside the printable area: move_object or arrange"
     return res
@@ -533,6 +536,71 @@ def reset_setting(key: str) -> dict:
     return {"key": key, "value": pr.config().get(key)}
 
 
+# ---------------------------------------------------------------- purge volumes
+MAX_PURGE, MAX_PURGE_MULTIPLIER = 900, 3.0      # Bambu Studio's limits in its purge dialog
+
+
+def _purge_table(pr):
+    m, hand = pr.purge_volumes()
+    cfg = pr.config()
+    mult = float((cfg.get("flush_multiplier") or ["1"])[0])
+    return {"multiplier": mult,
+            "slots": [{"slot": i + 1, "filament": n.split(" @")[0], "color": c} for i, (n, c) in enumerate(pr.filaments)],
+            "volumes_mm3": [[round(v) for v in row] for row in m],
+            "set_by_hand": sorted([list(k) for k in hand]),
+            "how_to_read": "volumes_mm3[from - 1][to - 1]: purged when going from one slot to the other; "
+                           "the purge is multiplier × volume. The others are estimated from the colors"}
+
+
+@tool()
+def get_purge_volumes() -> dict:
+    """Purge (flush) volumes between filament slots, in mm³, and the multiplier: the filament wasted at each
+    change on the prime tower (or into infill/objects, see set_purge_volumes)."""
+    return _purge_table(P())
+
+
+@tool()
+def set_purge_volumes(volumes: list[dict] | None = None, matrix: list[list[float]] | None = None,
+                      multiplier: float = 0, reset: bool = False) -> dict:
+    """Change the purge (flush) volumes, as in Bambu Studio's Purging volumes dialog.
+    volumes: [{"from": 1, "to": 2, "volume": 350}, ...] mm³ for single changes; matrix: every value at once,
+    rows = from, columns = to (the diagonal is ignored); multiplier: scales all of them (0..3, 1 = as written);
+    reset: back to the values estimated from the colors and multiplier 1. A value set by hand stays while both
+    slots keep their color. Values are 0..900 mm³. Less purge saves filament but the new color can come out mixed
+    at first; to waste less without that, purge into the infill or into an object with
+    set_setting('flush_into_infill', '1') or set_object_setting(object, 'flush_into_objects', '1')."""
+    pr = P(True)
+    n = len(pr.filaments)
+    if reset:
+        pr.flush_set, pr.flush_multiplier = {}, None
+    cols = [c for _, c in pr.filaments]
+    todo = []
+    if matrix is not None:
+        if len(matrix) != n or any(len(r) != n for r in matrix):
+            raise ValueError(f"matrix must be {n} × {n} (one row and one column per filament slot)")
+        todo += [(i + 1, j + 1, matrix[i][j]) for i in range(n) for j in range(n) if i != j]
+    for v in volumes or []:
+        try:
+            todo.append((int(v["from"]), int(v["to"]), v["volume"]))
+        except (KeyError, TypeError, ValueError):
+            raise ValueError('each entry is {"from": slot, "to": slot, "volume": mm³}') from None
+    for i, j, vol in todo:
+        if not (1 <= i <= n and 1 <= j <= n) or i == j:
+            raise ValueError(f"slots must be two different numbers in 1..{n}: got {i} → {j}")
+        vol = float(vol)
+        if not 0 <= vol <= MAX_PURGE:
+            raise ValueError(f"a purge volume is 0..{MAX_PURGE} mm³: got {vol:g} for {i} → {j}")
+        pr.flush_set[(i, j)] = (vol, cols[i - 1], cols[j - 1])
+    if multiplier:
+        if not 0 < multiplier <= MAX_PURGE_MULTIPLIER:
+            raise ValueError(f"multiplier is 0..{MAX_PURGE_MULTIPLIER:g}")
+        pr.flush_multiplier = float(multiplier)
+    res = _purge_table(pr)
+    if n < 2:
+        res["note"] = "one filament: nothing is purged"
+    return res
+
+
 # ---------------------------------------------------------------- files, slicing, previews
 @tool()
 def save_project(path: str = "", open_in_bambu: bool = False) -> dict:
@@ -666,29 +734,48 @@ def check_print_risks(plate: int = 0) -> list:
         risks, tall = [], []
         for o in pl.objects:
             w, d, h = (float(x) for x in o.size())
-            brim = o.settings.get("brim_type") or cfg.get("brim_type") or "auto_brim"
+            btype = o.settings.get("brim_type") or cfg.get("brim_type") or "auto_brim"
             area, width, piece = _footing(o)
             why = []
             slender = h >= 40 and h / max(min(w, d), 0.1) >= 4
             if slender:
                 why.append(f"{h:.0f} mm high on a {min(w, d):.0f} mm side")
-            if brim in ("no_brim", "auto_brim"):
+            if btype in ("no_brim", "auto_brim"):
                 if area < 1:
                     why.append("almost no flat face on the bed")
                 elif width and (h / width >= 4 or (width < 15 and h / width >= 1.5)):
                     why.append(f"stands on a {width:.1f} mm wide footing for {h:.1f} mm of height")
                 elif piece < 250:
                     why.append(f"a piece holds on {piece:.0f} mm² of the bed only")
+            try:
+                islands = _first_layer(pr, o)[0]
+            except Exception:                            # an odd mesh must not stop the other checks
+                islands = []
+            gap = brim.gaps(islands)
+            jointed = gap is not None and gap < 1.5     # print-in-place or articulated: pieces close together
             if why:
-                if brim in ("no_brim", "auto_brim"):
-                    fix = "give it an outer brim: set_object_setting(object, 'brim_type', 'outer_only')"
+                if btype in ("no_brim", "auto_brim"):
+                    if jointed:
+                        fix = (f"ears only on the thin parts: add_brim_ears(object); a full brim would weld pieces "
+                               f"{gap:.1f} mm apart on the first layer")
+                    else:
+                        fix = "give it an outer brim: set_object_setting(object, 'brim_type', 'outer_only')"
                     if slender:
                         fix += "; or lay it down / cut it, and avoid sport speed"
-                    has = ", no brim" if brim == "no_brim" else ", brim left to auto"
+                    has = ", no brim" if btype == "no_brim" else ", brim left to auto"
                 else:
                     fix = "it has a brim; if it can lie down or be cut, print it that way, and avoid sport speed"
-                    has = f", brim {brim}"
+                    has = f", brim {btype}"
                 risks.append({"object": o.name, "id": o.uid, "risk": "; ".join(why) + has, "advice": fix})
+            if jointed and btype in ("outer_only", "inner_only", "outer_and_inner"):
+                risks.append({"object": o.name, "id": o.uid,
+                              "risk": f"pieces {gap:.1f} mm apart on the first layer (print-in-place or articulated) "
+                                      f"with a {btype} brim: it can fill the gaps and weld them",
+                              "advice": "set_object_setting(object, 'brim_type', 'no_brim'), then add_brim_ears(object)"})
+            if btype == "brim_ears" and not o.brim_ears:
+                risks.append({"object": o.name, "id": o.uid,
+                              "risk": "brim type brim_ears (Painted) but no ears: no brim is printed",
+                              "advice": "add_brim_ears(object)"})
             if h >= 120:
                 tall.append(o.name)
         used = sorted({f for o in pl.objects for f in o.filaments()})
@@ -725,6 +812,7 @@ def reprint_objects(objects: list[str], brim: bool = True, name: str = "", slice
             picked.append(o)
     t = Project(name or f"{pr.name} reprint", pr.machine, pr.process, list(pr.filaments))
     t.overrides = copy.deepcopy(pr.overrides)
+    t.flush_set, t.flush_multiplier = dict(pr.flush_set), pr.flush_multiplier
     for o in picked:
         c = copy.deepcopy(o)
         c.uid = None
@@ -1113,6 +1201,9 @@ def sync_with_bambu_studio(force: bool = False) -> dict:
 
 
 # ---------------------------------------------------------------- mirror, lay flat, cut
+_EARS_GONE = "its brim ears were removed (the side on the bed changed): add_brim_ears again"
+
+
 @tool()
 def mirror_object(object: str, axis: str = "x") -> dict:
     """Mirror an object across its own center (axis x, y or z)."""
@@ -1128,6 +1219,12 @@ def mirror_object(object: str, axis: str = "x") -> dict:
         p.verts, p.tris = v + c, t
         painted = painted or bool(p.tri_attrs)
     res = {"name": o.name, "mirrored": axis, "size_mm": [round(float(v), 1) for v in o.size()]}
+    if o.brim_ears and axis == "z":
+        o.brim_ears = []
+        res["note"] = _EARS_GONE
+    elif o.brim_ears:
+        k = "xy".index(axis)
+        o.brim_ears = [(2 * c[0] - x, y, r) if k == 0 else (x, 2 * c[1] - y, r) for x, y, r in o.brim_ears]
     if painted:
         res["warning"] = "painted colors or seams may not follow the mirror exactly: check in Bambu Studio"
     return res
@@ -1141,8 +1238,10 @@ def lay_flat(object: str, face: int = 1) -> dict:
     _, o = pr.find(object)
     allv = np.concatenate([p.verts for p in o.solid_parts()])
     R, area = geometry.lay_flat_matrix(allv, face)
-    o.transform(lambda v: v @ R.T)
+    dropped = o.transform(lambda v: v @ R.T)
     res = {"name": o.name, "face_area_mm2": round(float(area), 1), "size_mm": [round(float(v), 1) for v in o.size()]}
+    if dropped:
+        res["note"] = _EARS_GONE
     if pr.out_of_bed(o):
         res["warning"] = "now (partly) outside the printable area: move_object or arrange"
     return res
@@ -1167,15 +1266,19 @@ def cut_object(object: str, z: float, keep: str = "both", flip_top: bool = True)
     pl = pr.plates[pi]
     pl.objects.remove(o)
     made = []
+    settings = {k: v for k, v in o.settings.items() if not (k == "brim_type" and v == "brim_ears")}
     if keep in ("both", "bottom") and below:
-        ob = Obj(pr.unique_name(f"{o.name} bottom"), below, settings=dict(o.settings))
+        ob = Obj(pr.unique_name(f"{o.name} bottom"), below, settings=dict(settings))
         made.append(_place(pr, pi + 1, ob, o.at[0], o.at[1]))
     if keep in ("both", "top") and above:
-        ot = Obj(pr.unique_name(f"{o.name} top"), above, settings=dict(o.settings))
+        ot = Obj(pr.unique_name(f"{o.name} top"), above, settings=dict(settings))
         if flip_top:
             ot.transform(lambda v: geometry.rotate(v, 180, "x"))
         made.append(_place(pr, pi + 1, ot, None if keep == "both" else o.at[0], None if keep == "both" else o.at[1]))
-    return {"cut": o.name, "at_z": z, "pieces": made}
+    res = {"cut": o.name, "at_z": z, "pieces": made}
+    if o.brim_ears:
+        res["note"] = "the brim ears were not kept on the pieces: add_brim_ears on them if needed"
+    return res
 
 
 # ---------------------------------------------------------------- modifiers
@@ -1241,6 +1344,95 @@ def remove_part(object: str, part: str) -> dict:
         raise ValueError("that is the last solid part: use delete_object instead")
     o.parts = rest
     return {"name": o.name, "parts": [{"name": p.name, "type": p.subtype} for p in o.parts]}
+
+
+# ---------------------------------------------------------------- brim ears
+def _first_layer(pr, o):
+    """Islands of the object's first layer, in the frame of its vertices, and the offset from that frame to the
+    plate (plate = frame + offset)."""
+    cfg = pr.config()
+    try:
+        z = float(cfg.get("initial_layer_print_height") or 0.2) / 2
+    except ValueError:
+        z = 0.1
+    lo, hi = o.bbox()
+    off = (float(o.at[0] - (lo[0] + hi[0]) / 2), float(o.at[1] - (lo[1] + hi[1]) / 2))
+    return brim.first_layer([(p.verts, p.tris) for p in o.solid_parts()], z), off
+
+
+def _ear_radius(pr):
+    """Bambu Studio's default ear: 16 first-layer line widths across (a width can be a % of the nozzle)."""
+    cfg = pr.config()
+    lw = str(cfg.get("initial_layer_line_width") or "0.5")
+    nozzle = cfg.get("nozzle_diameter") or ["0.4"]
+    try:
+        w = float(lw[:-1]) / 100 * float(nozzle[0]) if lw.endswith("%") else float(lw)
+    except ValueError:
+        w = 0.5
+    return round(8 * w, 1)
+
+
+@tool()
+def add_brim_ears(object: str, points: list[list[float]] | None = None, radius: float = 0, narrow: float = 3.0,
+                  small: float = 0, clearance: float = 0.6, keep: bool = False) -> dict:
+    """Brim ears: small round brims only where a part needs them, instead of a brim all around (Bambu Studio's
+    Painted brim). Meant for print-in-place and articulated models: a full brim fills the joint gaps on the first
+    layer and welds them. Without points, ears go to the tips of the thin parts of the first layer (fingers, toes,
+    any tip thinner than `narrow` mm), each as large as possible up to `radius` without reaching another piece, a
+    gap or hole, or a second thin part (those tips are listed as skipped, with the reason). small > 0 also gives
+    ears to first-layer pieces smaller than that (mm²), at their ends. points: [[x, y], ...] or [[x, y, radius]]
+    in plate mm, placed as given, with a warning when one would weld something. radius 0 = Bambu Studio's default
+    (16 first-layer line widths across). keep: add to the ears the object already has.
+    Look at them with preview_plate(view='top', zoom=True), then slice_project and preview_layer(layer=1)."""
+    pr = P(True)
+    _, o = pr.find(object)
+    islands, off = _first_layer(pr, o)
+    if not islands:
+        raise ValueError(f"{o.name} has nothing on the bed to put ears on")
+    r0 = radius or _ear_radius(pr)
+    ears, skipped, warnings = [], [], []
+    if points:
+        for pt in points:
+            if len(pt) not in (2, 3):
+                raise ValueError("each point is [x, y] or [x, y, radius] in plate mm")
+            x, y = pt[0] - off[0], pt[1] - off[1]
+            r = float(pt[2]) if len(pt) == 3 else r0
+            why = brim.check(islands, brim.island_of(islands, x, y), x, y, r, clearance)
+            if why:
+                warnings.append(f"ear at ({pt[0]:g}, {pt[1]:g}): {why}")
+            ears.append((float(x), float(y), r))
+    else:
+        ears, skipped = brim.auto_ears(islands, r0, narrow=narrow, small=small, clearance=clearance)
+    o.brim_ears = (o.brim_ears if keep else []) + ears
+    if o.brim_ears:
+        o.settings["brim_type"] = "brim_ears"
+    res = {"name": o.name, "brim_type": o.settings.get("brim_type"),
+           "ears": [{"x": round(x + off[0], 1), "y": round(y + off[1], 1), "radius": r} for x, y, r in o.brim_ears],
+           "first_layer": {"pieces": len(islands)}}
+    gap = brim.gaps(islands)
+    if gap is not None:
+        res["first_layer"]["smallest_gap_mm"] = round(gap, 2)
+    if skipped:
+        res["skipped"] = [{"x": round(x + off[0], 1), "y": round(y + off[1], 1), "why": why} for x, y, why in skipped]
+    if warnings:
+        res["warnings"] = warnings
+    if not o.brim_ears:
+        res["note"] = ("no tip needs an ear here: try a larger `narrow`, `small` for little pieces, or give points"
+                       if not skipped else "every tip was too close to something: give points, or a smaller clearance")
+    res["next"] = "preview_plate(view='top', zoom=True); slice_project, then preview_layer(layer=1)"
+    return res
+
+
+@tool()
+def remove_brim_ears(object: str) -> dict:
+    """Remove an object's brim ears; its brim goes back to the project's brim type."""
+    pr = P(True)
+    _, o = pr.find(object)
+    n = len(o.brim_ears)
+    o.brim_ears = []
+    if o.settings.get("brim_type") == "brim_ears":
+        del o.settings["brim_type"]
+    return {"name": o.name, "removed": n, "brim_type": o.settings.get("brim_type") or pr.config().get("brim_type")}
 
 
 # ---------------------------------------------------------------- standalone test prints

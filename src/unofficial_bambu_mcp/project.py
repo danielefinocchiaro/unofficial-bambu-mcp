@@ -34,6 +34,7 @@ class Obj:
     def __init__(self, name, parts, at=(0.0, 0.0), settings=None):
         self.name, self.parts, self.at, self.settings = name, parts, tuple(at), settings or {}
         self.uid = None           # stable id, given by Project.objects()
+        self.brim_ears = []       # [(x, y, radius)] in the frame of the parts' vertices, on the bed
 
     def solid_parts(self):
         return [p for p in self.parts if p.subtype == "normal_part"] or self.parts
@@ -53,11 +54,21 @@ class Obj:
         return (self.at[0] - w / 2, self.at[1] - d / 2, self.at[0] + w / 2, self.at[1] + d / 2)
 
     def transform(self, fn):
-        """Apply fn(verts) -> verts to all parts, keeping the footprint centered on `at`."""
+        """Apply fn(verts) -> verts to all parts, keeping the footprint centered on `at`. Brim ears follow; they
+        are removed if the object is tipped over (they would no longer be on the bed): returns True then."""
         lo, hi = self.bbox()
         c = (lo + hi) / 2
+        ears = np.array([[x, y, lo[2]] for x, y, _ in self.brim_ears]) if self.brim_ears else None
         for p in self.parts:
             p.verts = fn(p.verts - c) + c
+        if ears is None:
+            return False
+        moved = fn(ears - c) + c
+        if np.abs(moved[:, 2] - self.bbox()[0][2]).max() > 0.05:
+            self.brim_ears = []
+            return True
+        self.brim_ears = [(float(x), float(y), r) for (x, y, _), (_, _, r) in zip(moved, self.brim_ears, strict=True)]
+        return False
 
     def filaments(self):
         return sorted({p.filament for p in self.parts})
@@ -103,6 +114,8 @@ class Project:
         default_fil = info["default_filament"] or "Bambu PLA Basic @BBL X1C"
         self.filaments = [(presets.filament_for(n, self.machine), c) for n, c in (filaments or [(default_fil, "#FFFFFF")])]
         self.overrides = {}
+        self.flush_set = {}       # {(from slot, to slot): (mm³, from color, to color)}: purge volumes set by hand
+        self.flush_multiplier = None
         self.last_uid = 0         # highest object id given so far (ids are never reused)
         self.plates = [Plate("Plate 1")]
         self.extras = {}          # files carried over from an opened 3MF (e.g. custom G-code per layer)
@@ -293,12 +306,14 @@ class Project:
             "filament_ids": [presets.flat("filament", nm).get("filament_id", "") for nm, _ in self.filaments],
             "filament_self_index": [str(i + 1) for i in range(n)],
             "filament_map": ["1"] * n,
-            "flush_volumes_matrix": [str(flush_volume(a, b)) for a in cols for b in cols],
+            "flush_volumes_matrix": [f"{v:g}" for row in self.purge_volumes()[0] for v in row],
             "flush_volumes_vector": ["140"] * (2 * max(n, 4)),
             "print_compatible_printers": presets.flat("process", self.process).get("compatible_printers", []),
             "inherits_group": [""] * (n + 2),
             "enable_prime_tower": "1" if n > 1 else "0",
         })
+        if self.flush_multiplier is not None:
+            cfg["flush_multiplier"] = [f"{self.flush_multiplier:g}"]
         used = self.used_filaments()
         towers = []
         for pl in self.plates:
@@ -322,6 +337,18 @@ class Project:
         cfg["different_settings_to_system"] = [";".join(sorted(diff_p))] + [";".join(sorted(d)) for d in diff_f] + [
             ";".join(sorted(diff_m))]
         return cfg
+
+    def purge_volumes(self):
+        """(matrix [from][to] in mm³, {(from, to)} set by hand) for the current slots. Values set by hand apply
+        while both slots keep the colors they had then; the others are estimated from the colors."""
+        cols = [c for _, c in self.filaments]
+        m = [[flush_volume(a, b) for b in cols] for a in cols]
+        hand = set()
+        for (i, j), (vol, ci, cj) in self.flush_set.items():
+            if i != j and i <= len(cols) and j <= len(cols) and (cols[i - 1].upper(), cols[j - 1].upper()) == (ci.upper(), cj.upper()):
+                m[i - 1][j - 1] = vol
+                hand.add((i, j))
+        return m, hand
 
     def used_filaments(self):
         return sorted({f for _, o in self.objects() for f in o.filaments()})
@@ -347,6 +374,8 @@ class Project:
                     entry["part_list"] = [{"name": p.name, "filament": p.filament, "type": p.subtype} for p in o.parts]
                 if o.settings:
                     entry["settings"] = o.settings
+                if o.brim_ears:
+                    entry["brim_ears"] = len(o.brim_ears)
                 if self.out_of_bed(o):
                     entry["warning"] = "outside the printable area"
                 if any(p.tri_attrs.get("paint_color") for p in o.parts):

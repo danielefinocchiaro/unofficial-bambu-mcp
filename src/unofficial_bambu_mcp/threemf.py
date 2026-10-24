@@ -13,7 +13,7 @@ from xml.sax.saxutils import escape, quoteattr
 
 import numpy as np
 
-from . import presets
+from . import brim, presets
 from .project import GCODE_TYPES, LayerGcode, Obj, Part, Plate, Project
 
 CORE = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
@@ -56,7 +56,7 @@ def write(project, path, title=None):
              ' <metadata name="BambuStudio:3mfVersion">1</metadata>\n',
              f' <metadata name="Title">{escape(title)}</metadata>\n', ' <resources>\n']
     build, rels, conf = [], [], [HEAD, "<config>\n"]
-    plate_objs = []
+    plate_objs, ears = [], []
     next_id, n_file = 1, 0
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         for pi, plate in enumerate(project.plates):
@@ -104,6 +104,9 @@ def write(project, path, title=None):
                 model.append(f'  <object id="{oid}" p:UUID="{uid()}" type="model">\n   <components>\n'
                              + "".join(comps) + "   </components>\n  </object>\n")
                 pos = origin + np.array([ob.at[0], ob.at[1], c[2] - lo[2]])
+                # brim ears relative to the object as written (vertices - c), just under the bed: Bambu Studio skips
+                # points above it
+                ears.append((n_file, [(x - c[0], y - c[1], lo[2] - c[2] - 0.001, r) for x, y, r in ob.brim_ears]))
                 build.append(f'  <item objectid="{oid}" p:UUID="{uid()}" '
                              f'transform="1 0 0 0 1 0 0 0 1 {pos[0]:.4f} {pos[1]:.4f} {pos[2]:.4f}" printable="1"/>\n')
                 conf.append(f'  <object id="{oid}">\n    <metadata key="name" value={quoteattr(ob.name)}/>\n'
@@ -150,6 +153,9 @@ def write(project, path, title=None):
         xml = _layer_gcodes_xml(project)
         if xml:
             z.writestr(LAYER_GCODE_FILE, xml)
+        txt = brim.write_points(ears)            # objects are numbered in build order, from 1
+        if txt:
+            z.writestr(brim.EARS_FILE, txt)
         for name, data in project.extras.items():
             z.writestr(name, data)
     return path
@@ -320,6 +326,25 @@ def _author_changes(proj, cfg, same_printer, remapped, warnings):
                         f"{', '.join(sorted(dropped))}")
 
 
+def _purge_from_file(proj, cfg, warnings):
+    """Purge volumes and multiplier of the file (Bambu Studio's own, or the author's), for the slots' colors."""
+    n = len(proj.filaments)
+    vals = cfg.get("flush_volumes_matrix") or []
+    try:
+        vals = [float(v) for v in vals]
+        mult = float((cfg.get("flush_multiplier") or ["1"])[0])
+    except (TypeError, ValueError):
+        return
+    if n > 1 and len(vals) == n * n:
+        cols = [c for _, c in proj.filaments]
+        proj.flush_set = {(i + 1, j + 1): (vals[i * n + j], cols[i], cols[j])
+                          for i in range(n) for j in range(n) if i != j}
+    elif n > 1 and vals:
+        warnings.append("purge volumes of the file were not carried over (another layout, e.g. two nozzles)")
+    if mult != 1:
+        proj.flush_multiplier = mult
+
+
 def _bed_width(cfg, fallback):
     """Bed width of the printer the file was made for (plates are laid out with it), from printable_area."""
     try:
@@ -344,6 +369,7 @@ def read(path):
 
         ms = ET.fromstring(z.read("Metadata/model_settings.config")) if "Metadata/model_settings.config" in names else None
         extras = {n: z.read(n) for n in PASSTHROUGH if n in names}
+        ear_pts = brim.read_points(z.read(brim.EARS_FILE).decode()) if brim.EARS_FILE in names else {}
         layer_gcodes = _read_layer_gcodes(z.read(LAYER_GCODE_FILE)) if LAYER_GCODE_FILE in names else {}
         for n in ("Metadata/layer_heights_profile.txt", "Metadata/layer_config_ranges.xml"):
             if n in names:
@@ -380,6 +406,7 @@ def read(path):
     _author_changes(proj, cfg, machine == file_machine, remapped, warnings)
     if cfg.get("curr_bed_type"):      # a project choice, not a preset setting: never listed in the diff above
         proj.overrides["curr_bed_type"] = cfg["curr_bed_type"]
+    _purge_from_file(proj, cfg, warnings)
 
     # objects from model_settings (names, parts, filaments, settings) + plates
     obj_meta, plates_meta = {}, []
@@ -409,13 +436,15 @@ def read(path):
                 out += world_parts(cid, m_item @ m_c, sub(pth) if pth else src, depth + 1)
         return out
 
-    built, seen = {}, {}
+    built, seen, order = {}, {}, {}
     for oid, m_item, printable, item_path in build:
         k_inst = seen.get(oid, 0)
         seen[oid] = k_inst + 1
+        order.setdefault(oid, len(order) + 1)            # Bambu Studio numbers objects as they first appear here
         md, parts_md = obj_meta.get(oid, ({}, {}))
-        parts = []
+        parts, mats = [], []
         for cid, m, verts, tris, attrs in world_parts(oid, m_item, sub(item_path) if item_path else main):
+            mats.append(m)
             subtype, pmd = parts_md.get(cid, ("normal_part", {}))
             fil = int(pmd.get("extruder") or md.get("extruder") or 1)
             keep = {k: v for k, v in pmd.items() if k not in ("name", "matrix", "extruder", "source_file",
@@ -429,7 +458,12 @@ def read(path):
             continue
         settings = {k: v for k, v in md.items() if k not in ("name", "extruder")}
         name = md.get("name") or f"Object {oid}"
-        built[(oid, k_inst)] = Obj(name if k_inst == 0 else f"{name} {k_inst + 1}", parts, settings=settings)
+        ob = built[(oid, k_inst)] = Obj(name if k_inst == 0 else f"{name} {k_inst + 1}", parts, settings=settings)
+        for x, y, zz, r, vol in ear_pts.get(order[oid], []):
+            # a point belongs to the object (volume -1) or to one of its parts; world = instance @ [part] @ point
+            m = mats[int(vol)] if 0 <= vol < len(mats) else m_item
+            w = m @ np.array([x, y, zz, 1.0])
+            ob.brim_ears.append((float(w[0]), float(w[1]), float(r)))
         if printable == "0":
             warnings.append(f"'{name}' was marked not printable")
 
@@ -448,6 +482,7 @@ def read(path):
             lo, hi = ob.bbox()
             for p in ob.parts:
                 p.verts = p.verts - origin
+            ob.brim_ears = [(float(x - origin[0]), float(y - origin[1]), r) for x, y, r in ob.brim_ears]
             lo, hi = ob.bbox()
             ob.at = (float((lo[0] + hi[0]) / 2), float((lo[1] + hi[1]) / 2))
             pl.objects.append(ob)

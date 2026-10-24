@@ -19,6 +19,13 @@ Added
 - `preview_layer` frames the extrusions by default; slicing reports pauses.
 - Previews darken recesses, so engraved numbers (temperature tower, flow squares) can be read.
 - `scripts/make_demo.py`: the README demo, made by driving the server through an MCP client.
+- `add_brim_ears` / `remove_brim_ears`: brim ears (Bambu Studio's Painted brim, `Metadata/brim_ear_points.txt`)
+  only on the thin tips of the first layer, sized so they reach no other piece, joint gap or hole; or at given
+  points. Kept when opening and saving files, drawn in `preview_plate`. Tested on a print-in-place skeleton:
+  ears on all ten fingertips, no brim in the joint gaps of the sliced first layer.
+- `check_print_risks` warns when a full brim would weld a print-in-place model and suggests ears.
+- `get_purge_volumes` / `set_purge_volumes`: purge volumes per pair of slots and multiplier; the values of an
+  opened file are kept (they were replaced by the estimate from the colors).
 - New projects use the build plate picked in Bambu Studio for that printer (`build_plate` in the summary).
 
 Fixed

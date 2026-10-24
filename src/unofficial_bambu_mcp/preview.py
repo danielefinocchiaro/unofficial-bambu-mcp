@@ -9,6 +9,7 @@ BG = (36, 38, 42)
 BED = (70, 74, 80)
 BED_LINE = (88, 93, 100)
 EXCL = (95, 60, 60)
+EAR = (120, 175, 230)
 
 
 def _hex(c):
@@ -170,6 +171,14 @@ def render_plate(project, plate_index, view="iso", size=900, label=True, zoom=Fa
     if ex:
         poly = to_px(_view(np.array([[x, y, 0] for x, y in ex], float), view))
         dr.polygon([tuple(p) for p in poly], fill=EXCL)
+    for ob in pl.objects:                               # brim ears, as discs on the bed under the object
+        if ob.brim_ears:
+            elo, ehi = ob.bbox()
+            sx, sy = ob.at[0] - (elo[0] + ehi[0]) / 2, ob.at[1] - (elo[1] + ehi[1]) / 2
+            ang = np.linspace(0, 2 * math.pi, 32, endpoint=False)
+            for ex_, ey_, er in ob.brim_ears:
+                ring = np.column_stack([ex_ + sx + er * np.cos(ang), ey_ + sy + er * np.sin(ang), np.zeros_like(ang)])
+                dr.polygon([tuple(q) for q in to_px(_view(ring, view))], fill=EAR)
     if faces:
         n = np.cross(F[:, 1] - F[:, 0], F[:, 2] - F[:, 0])
         nl = np.linalg.norm(n, axis=1)

@@ -535,3 +535,109 @@ def test_release_metadata_agree():
     server = json.loads((root / "server.json").read_text())
     assert server["version"] == server["packages"][0]["version"] == version
     assert f"<!-- mcp-name: {server['name']} -->" in (root / "README.md").read_text()
+
+
+# ---------------------------------------------------------------- brim ears
+def _hand():
+    """A 20 × 10 mm palm with three 1.6 mm fingers 8 mm long, and a separate piece 0.8 mm past the palm."""
+    from shapely.geometry import box as rect
+    from shapely.ops import unary_union
+    palm = unary_union([rect(0, 0, 20, 10)] + [rect(x, 10, x + 1.6, 18) for x in (2, 9, 16)])
+    return [palm, rect(20.8, 0, 30, 10)]
+
+
+def test_brim_ears_on_finger_tips_only():
+    from unofficial_bambu_mcp import brim
+    islands = _hand()
+    ears, skipped = brim.auto_ears(islands, 4)
+    assert len(ears) == 3 and not skipped
+    for x, y, r in ears:
+        assert y > 16 and r >= 2                        # at the tips, not on the palm
+        assert brim.check(islands, 0, x, y, r, 0.6) is None
+        assert islands[1].distance(brim.Point(x, y)) > r  # never reaching the other piece
+    assert round(brim.gaps(islands), 2) == 0.8
+
+
+def test_brim_ear_checks():
+    from shapely.geometry import Polygon
+    from shapely.geometry import box as rect
+
+    from unofficial_bambu_mcp import brim
+    islands = _hand()
+    assert brim.check(islands, 0, 20.4, 5, 3, 0.6) == "it would reach another piece"
+    assert brim.check(islands, 0, 9.8, 18, 6, 0.6) == "it would join two thin parts of the same piece"
+    assert brim.check(islands, 0, 50, 50, 3, 0.6) == "it does not touch the object"
+    ring = Polygon(rect(0, 0, 20, 20).exterior, [rect(8, 8, 12, 12).exterior.coords])
+    assert brim.check([ring], 0, 10, 10, 1.5, 0.3) == "it would fill a gap or hole"
+
+
+def test_brim_ear_points_file_round_trip():
+    from unofficial_bambu_mcp import brim
+    txt = brim.write_points([(1, [(1.5, -2.0, -3.001, 4.0)]), (2, []), (3, [(0, 0, 0, 2), (1, 1, 0, 3)])])
+    assert txt.startswith("brim_points_format_version=1\nobject_id=1|1.500000 -2.000000 -3.001000 4.000000 -1\n")
+    pts = brim.read_points(txt)
+    assert set(pts) == {1, 3} and pts[3][1] == (1.0, 1.0, 0.0, 3.0, -1.0)
+    assert brim.read_points("object_id=2|1 2 3 4") == {2: [(1.0, 2.0, 3.0, 4.0, -1.0)]}   # format 0
+
+
+def test_brim_ears_follow_the_object():
+    from unofficial_bambu_mcp import geometry
+    from unofficial_bambu_mcp.project import Obj, Part
+    v, t = geometry.box(20, 10, 5)
+    o = Obj("tag", [Part("tag", v + [50, 60, 0], t, 1)], at=(50, 60))
+    o.brim_ears = [(60.0, 60.0, 3.0)]                 # on the right end
+    assert o.transform(lambda q: geometry.rotate(q, 90)) is False
+    assert np.allclose(o.brim_ears[0][:2], (50, 70), atol=1e-6)
+    assert o.transform(lambda q: geometry.rotate(q, 90, "x")) is True and o.brim_ears == []
+
+
+@needs_bambu
+def test_brim_ears_in_3mf_and_sliced(tmp_path, monkeypatch):
+    import re
+    import zipfile
+    monkeypatch.setenv("UBMCP_DIR", str(tmp_path))
+    from unofficial_bambu_mcp import server as s
+    from unofficial_bambu_mcp import threemf
+    s.new_project("ears", "P1S")
+    s.add_shape("box", width=30, depth=2, height=2, name="bar", x=100, y=100)
+    res = s.add_brim_ears("bar", points=[[115, 100]])
+    assert res["brim_type"] == "brim_ears" and res["ears"][0]["x"] == 115.0
+    path = s.save_project()["saved"]
+    back = threemf.read(path).plates[0].objects[0]
+    lo, hi = back.bbox()
+    ex, ey, er = back.brim_ears[0]
+    assert abs(ex - (lo[0] + hi[0]) / 2 + back.at[0] - 115) < 0.01 and er == res["ears"][0]["radius"]
+    sliced = s.slice_project()["sliced_file"]
+    g = zipfile.ZipFile(sliced).read("Metadata/plate_1.gcode").decode()
+    first = g.split("; CHANGE_LAYER")[1] if "; CHANGE_LAYER" in g else g
+    brim_part = first.split("; FEATURE: Brim")[1].split("; FEATURE:")[0]
+    xs = [float(x) for x in re.findall(r"G1 X([-\d.]+) Y[-\d.]+ E", brim_part)]
+    assert xs and min(xs) > 110                      # only around the right end, not along the whole bar
+    s.remove_brim_ears("bar")
+    assert "brim_type" not in s.P().find("bar")[1].settings
+
+
+# ---------------------------------------------------------------- purge volumes
+@needs_bambu
+def test_purge_volumes_set_kept_and_reset(tmp_path, monkeypatch):
+    monkeypatch.setenv("UBMCP_DIR", str(tmp_path))
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    from unofficial_bambu_mcp import server as s
+    from unofficial_bambu_mcp import threemf
+    s.new_project("purge", "P1S", filaments=[{"color": "#000000"}, {"color": "#FFFFFF"}, {"color": "#FF0000"}])
+    auto = s.get_purge_volumes()["volumes_mm3"]
+    t = s.set_purge_volumes(volumes=[{"from": 1, "to": 2, "volume": 800}], multiplier=1.5)
+    assert t["volumes_mm3"][0][1] == 800 and t["set_by_hand"] == [[1, 2]] and t["multiplier"] == 1.5
+    cfg = s.P().config()
+    assert cfg["flush_volumes_matrix"][1] == "800" and cfg["flush_multiplier"] == ["1.5"]
+    with pytest.raises(ToolError, match="two different"):
+        s.set_purge_volumes(volumes=[{"from": 2, "to": 2, "volume": 100}])
+    with pytest.raises(ToolError, match="3 × 3"):
+        s.set_purge_volumes(matrix=[[0, 1]])
+    back = threemf.read(s.save_project()["saved"])
+    assert back.purge_volumes()[0][0][1] == 800 and back.flush_multiplier == 1.5
+    s.set_filament(2, color="#00FF00")                 # a new color: the value set for the old one no longer applies
+    assert s.get_purge_volumes()["set_by_hand"] == []
+    t = s.set_purge_volumes(reset=True)
+    assert t["multiplier"] == 1 and t["volumes_mm3"][0][2] == auto[0][2]
