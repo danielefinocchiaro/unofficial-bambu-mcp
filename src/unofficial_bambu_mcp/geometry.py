@@ -348,14 +348,3 @@ def lay_flat_matrix(verts, face=1):
     faces = flat_faces(verts, top=max(5, face))
     area, normal = faces[min(face, len(faces)) - 1]
     return rotation_between(normal, (0, 0, -1)), area
-
-
-def split_z(verts, tris, z):
-    """Cut a closed solid with the horizontal plane at height z: (below, above) as (verts, tris) or None."""
-    _need_manifold()
-    m = to_manifold(verts, tris)
-    above, below = m.split_by_plane((0.0, 0.0, 1.0), float(z))
-    out = []
-    for piece in (below, above):
-        out.append(None if piece.is_empty() else from_manifold(piece))
-    return out[0], out[1]

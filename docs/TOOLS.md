@@ -522,15 +522,38 @@ Rotate an object so one of its flat faces lies on the bed: face 1 = the biggest 
 
 ## `cut_object`
 
-Cut an object horizontally at height z (mm from its bottom). keep: both | bottom | top. With flip_top the top
-piece is turned upside down so it prints on the flat cut face. Modifiers and painted colors are not kept.
+Cut an object with a plane, optionally with connectors that line the pieces up for gluing (like the
+connectors of Bambu Studio's Cut tool). keep: both | bottom | top.
+The plane is horizontal at height z (mm from the object's bottom), or goes through `point` [x, y, z] (plate mm,
+z above the bed) with `normal` [nx, ny, nz]: [1, 0, 0] cuts vertically across x, [0.5, 0, 1] is tilted.
+place: auto = the lower piece stays as it is and the upper one lies on its cut face; cut_down = both lie on their
+cut faces; keep = both as they were.
+connector: none | plug (a peg on the piece whose cut face is up, a hole with `clearance` mm per side in the
+other) | dowel (holes in both pieces and a separate pin, added to the plate) | dovetail (a tongue across the
+whole cut, along its length, and a slot in the other piece: they slide together from the side).
+shape: cylinder | square | hexagon; style: prism | frustum (tapered, centers itself); size: diameter or side in
+mm, or the dovetail's narrow width (0 = from the cut); depth: peg, pin or dovetail height (0 = automatic);
+count: 0 = one per piece of the cut (two along a long one), N = spread over the cut; positions: [[x, y], ...] or
+[[x, y, z]] in plate mm, taken on the plane (for a dovetail: a point on its middle line). Holes keep 2 mm of material from the
+edge and get shallower where a piece is thin; connectors that do not fit are listed as skipped.
+Modifiers and negative parts are cut too; painted colors are not kept.
 
 | Parameter | Type | Default |
 |---|---|---|
 | `object` | string | required |
-| `z` | number | required |
+| `z` | number | `0` |
 | `keep` | string | `'both'` |
-| `flip_top` | boolean | `True` |
+| `normal` | array / null | `None` |
+| `point` | array / null | `None` |
+| `place` | string | `'auto'` |
+| `connector` | string | `'none'` |
+| `shape` | string | `'cylinder'` |
+| `style` | string | `'prism'` |
+| `size` | number | `0` |
+| `depth` | number | `0` |
+| `count` | integer | `0` |
+| `positions` | array / null | `None` |
+| `clearance` | number | `0.2` |
 
 ## `add_modifier`
 

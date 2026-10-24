@@ -12,7 +12,7 @@ import numpy as np
 from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from . import brim, calibration, geometry, presets, preview, printer, slicer, studio, threemf
+from . import brim, calibration, cutting, geometry, presets, preview, printer, slicer, studio, threemf
 from .project import LayerGcode, Obj, Part, Plate, Project, next_free_path
 
 INSTRUCTIONS = """Work on Bambu Studio projects (.3mf) for Bambu Lab printers. Typical flow:
@@ -1248,37 +1248,119 @@ def lay_flat(object: str, face: int = 1) -> dict:
 
 
 @tool()
-def cut_object(object: str, z: float, keep: str = "both", flip_top: bool = True) -> dict:
-    """Cut an object horizontally at height z (mm from its bottom). keep: both | bottom | top. With flip_top the top
-    piece is turned upside down so it prints on the flat cut face. Modifiers and painted colors are not kept."""
+def cut_object(object: str, z: float = 0, keep: str = "both", normal: list[float] | None = None,
+               point: list[float] | None = None, place: str = "auto", connector: str = "none",
+               shape: str = "cylinder", style: str = "prism", size: float = 0, depth: float = 0, count: int = 0,
+               positions: list[list[float]] | None = None, clearance: float = 0.2) -> dict:
+    """Cut an object with a plane, optionally with connectors that line the pieces up for gluing (like the
+    connectors of Bambu Studio's Cut tool). keep: both | bottom | top.
+    The plane is horizontal at height z (mm from the object's bottom), or goes through `point` [x, y, z] (plate mm,
+    z above the bed) with `normal` [nx, ny, nz]: [1, 0, 0] cuts vertically across x, [0.5, 0, 1] is tilted.
+    place: auto = the lower piece stays as it is and the upper one lies on its cut face; cut_down = both lie on their
+    cut faces; keep = both as they were.
+    connector: none | plug (a peg on the piece whose cut face is up, a hole with `clearance` mm per side in the
+    other) | dowel (holes in both pieces and a separate pin, added to the plate) | dovetail (a tongue across the
+    whole cut, along its length, and a slot in the other piece: they slide together from the side).
+    shape: cylinder | square | hexagon; style: prism | frustum (tapered, centers itself); size: diameter or side in
+    mm, or the dovetail's narrow width (0 = from the cut); depth: peg, pin or dovetail height (0 = automatic);
+    count: 0 = one per piece of the cut (two along a long one), N = spread over the cut; positions: [[x, y], ...] or
+    [[x, y, z]] in plate mm, taken on the plane (for a dovetail: a point on its middle line). Holes keep 2 mm of material from the
+    edge and get shallower where a piece is thin; connectors that do not fit are listed as skipped.
+    Modifiers and negative parts are cut too; painted colors are not kept."""
     pr = P(True)
     pi, o = pr.find(object)
+    if keep not in ("both", "bottom", "top"):
+        raise ValueError("keep must be both, bottom or top")
     lo, hi = o.bbox()
-    if not 0 < z < hi[2] - lo[2]:
-        raise ValueError(f"z must be between 0 and the object height ({hi[2] - lo[2]:.1f} mm)")
-    below, above = [], []
-    for p in o.solid_parts():
-        b, a = geometry.split_z(p.verts, p.tris, lo[2] + z)
-        if b:
-            below.append(Part(p.name, b[0], b[1], p.filament))
-        if a:
-            above.append(Part(p.name, a[0], a[1], p.filament))
-    pl = pr.plates[pi]
-    pl.objects.remove(o)
-    made = []
+    c = (lo + hi) / 2
+    off = np.array([o.at[0] - c[0], o.at[1] - c[1], -lo[2]])          # plate = vertices + off
+    if point is None:
+        if normal is None and not 0 < z < hi[2] - lo[2]:
+            raise ValueError(f"z must be between 0 and the object height ({hi[2] - lo[2]:.1f} mm)")
+        pt = np.array([c[0], c[1], lo[2] + z])
+    elif len(point) == 3:
+        pt = np.asarray(point, float) - off
+    else:
+        raise ValueError("point is [x, y, z] in plate mm")
+    nrm = normal or [0.0, 0.0, 1.0]
+    parts, notes = [], []
+    for p in o.parts:
+        m = geometry.to_manifold(p.verts, p.tris)
+        if m.status() != geometry.m3.Error.NoError or m.is_empty():
+            if p.subtype == "normal_part":
+                raise ValueError(f"part '{p.name}' is not a closed solid (see check_object): it cannot be cut")
+            notes.append(f"'{p.name}' ({p.subtype}) is not a closed solid and was dropped")
+            continue
+        parts.append((m, p, p.subtype == "normal_part"))
+    pos = None
+    if positions:
+        _, p0, n = cutting.frame(pt, nrm)
+        pos = []
+        for q in positions:
+            if len(q) == 2:
+                if abs(n[2]) < 0.1:
+                    raise ValueError("on a vertical plane give positions as [x, y, z]")
+                x, y = q[0] - off[0], q[1] - off[1]
+                q3 = np.array([x, y, p0[2] - (n[0] * (x - p0[0]) + n[1] * (y - p0[1])) / n[2]])
+            elif len(q) == 3:
+                q3 = np.asarray(q, float) - off
+            else:
+                raise ValueError("each position is [x, y] or [x, y, z] in plate mm")
+            pos.append(q3 - np.dot(q3 - p0, n) * n)
+    res = cutting.cut(parts, pt, nrm, connector=connector, shape=shape, style=style, size=size, depth=depth,
+                      count=count, positions=pos, clearance=clearance, place=place)
     settings = {k: v for k, v in o.settings.items() if not (k == "brim_type" and v == "brim_ears")}
-    if keep in ("both", "bottom") and below:
-        ob = Obj(pr.unique_name(f"{o.name} bottom"), below, settings=dict(settings))
-        made.append(_place(pr, pi + 1, ob, o.at[0], o.at[1]))
-    if keep in ("both", "top") and above:
-        ot = Obj(pr.unique_name(f"{o.name} top"), above, settings=dict(settings))
-        if flip_top:
-            ot.transform(lambda v: geometry.rotate(v, 180, "x"))
-        made.append(_place(pr, pi + 1, ot, None if keep == "both" else o.at[0], None if keep == "both" else o.at[1]))
-    res = {"cut": o.name, "at_z": z, "pieces": made}
+
+    def build(items, label):
+        new = []
+        for m, p in items:
+            if not m.is_empty():
+                v, t = geometry.from_manifold(m)
+                new.append(Part(p.name, v, t, p.filament, p.subtype, meta=dict(p.meta)))
+        if not any(q.subtype == "normal_part" for q in new):
+            return None
+        return Obj(pr.unique_name(f"{o.name} {label}"), new, settings=dict(settings))
+
+    pr.plates[pi].objects.remove(o)
+    made, names = [], {}
+    if keep in ("both", "bottom"):
+        a = build(res["A"], "bottom")
+        if a:
+            names["A"] = a.name
+            if place == "cut_down":
+                made.append(_place(pr, pi + 1, a, None, None))
+            else:                                        # kept as it was: it stays where it was
+                alo, ahi = a.bbox()
+                made.append(_place(pr, pi + 1, a, (alo[0] + ahi[0]) / 2 + off[0], (alo[1] + ahi[1]) / 2 + off[1]))
+    if keep in ("both", "top"):
+        b = build(res["B"], "top")
+        if b:
+            names["B"] = b.name
+            made.append(_place(pr, pi + 1, b, None, None))
+    out = {"cut": o.name, "plane": {"point": [round(float(v), 2) for v in pt + off], "normal": res["normal"]},
+           "pieces": made}
+    if connector != "none":
+        info = {"type": connector, "shape": shape, "style": style, "size_mm": res.get("size"),
+                "clearance_mm": clearance,
+                "placed": [{"at": [round(float(v), 1) for v in np.asarray(k["at"]) + off], "depth_mm": k["depth"],
+                            **({"along": k["along"]} if "along" in k else {})} for k in res["connectors"]]}
+        if res.get("male"):
+            info["peg_on"] = names.get(res["male"], "a piece not kept")
+        out["connectors"] = info
+        if res["pins"] is not None:
+            v, t = geometry.from_manifold(res["pins"])
+            pins = Obj(pr.unique_name(f"{o.name} pins"), [Part("pins", v, t, o.solid_parts()[0].filament)])
+            out["pins"] = _place(pr, pi + 1, pins, None, None)
+        if res["skipped"]:
+            out["skipped"] = [{**k, "at": [round(float(v), 1) for v in np.asarray(k["at"]) + off]} if "at" in k else k
+                              for k in res["skipped"]]
+    if any(p.tri_attrs for p in o.parts):
+        notes.append("painted colors, seams and supports are not kept on the pieces")
     if o.brim_ears:
-        res["note"] = "the brim ears were not kept on the pieces: add_brim_ears on them if needed"
-    return res
+        notes.append("the brim ears were not kept on the pieces: add_brim_ears on them if needed")
+    if notes:
+        out["notes"] = notes
+    return out
 
 
 # ---------------------------------------------------------------- modifiers

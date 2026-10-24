@@ -34,7 +34,8 @@ are written for the demo ([scripts/make_demo.py](scripts/make_demo.py)).</sub>
 | Projects | Create a project, or **open any .3mf** saved by Bambu Studio (2.x and older 1.6/1.7 files) or downloaded from MakerWorld / Printables: painted colors, modifiers, per-object settings, instances and plates are kept. Save without ever overwriting. |
 | Printers | P1S, P1P, P2S, X1C, X1, X1E, A1, A1 mini, H2S (single nozzle) or any machine preset. **Switch printer** and objects are re-arranged for the new bed. New projects use the build plate you picked in Bambu Studio for that printer. |
 | Filaments | AMS slots with preset and color, your own user presets included. `use_ams_filaments` takes what is loaded in the AMS right now. |
-| Plates & objects | Import STL, OBJ, 3MF; boxes, cylinders, cones, spheres and **text** (with a base in another color). Move, rotate, scale, **mirror**, **lay flat**, **cut**, duplicate, **auto-arrange**, filament per object or part, per-object settings, closed-solid check. Object ids stay the same while you work. |
+| Plates & objects | Import STL, OBJ, 3MF; boxes, cylinders, cones, spheres and **text** (with a base in another color). Move, rotate, scale, **mirror**, **lay flat**, duplicate, **auto-arrange**, filament per object or part, per-object settings, closed-solid check. Object ids stay the same while you work. |
+| Cutting | `cut_object` on any plane, with **connectors** like Bambu Studio's Cut tool: a **plug** (peg and hole with clearance), **dowels** (holes in both pieces and separate pins) or a **dovetail**; round, square or hexagonal, straight or tapered, placed automatically or where you say, made shallower where a piece is thin. The pieces are laid out to print: the peg always points up. |
 | Modifiers | Box or **round** parts: modifiers with their own settings ("the top 5 mm at 100 % infill"), negative parts (holes for magnets and screws), support blockers and enforcers. |
 | Settings | Read or change any Bambu Studio setting, per filament slot when it applies, with a warning when a value cannot apply (e.g. a textured-plate temperature on a smooth plate). |
 | Purge volumes | `get_purge_volumes` / `set_purge_volumes`: the purge between each pair of slots and the multiplier, as in Bambu Studio's dialog; the values in opened files are kept. |
@@ -142,7 +143,7 @@ flattened the way the app does. Details in [docs/how-it-works.md](docs/how-it-wo
 
 - Single-nozzle printers; dual-nozzle machines (H2D) need settings that are not handled.
 - Variable layer height and height-range modifiers in opened projects are not carried over (you get a warning).
-- First-layer tests and cuts do not keep painted colors.
+- First-layer tests and cut pieces do not keep painted colors.
 - Bambu Studio re-slices a project when it opens it; to see a plate sliced and ready to print in the app, use
   `send_to_printer`.
 

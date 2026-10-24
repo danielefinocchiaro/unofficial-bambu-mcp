@@ -26,6 +26,11 @@ Added
 - `check_print_risks` warns when a full brim would weld a print-in-place model and suggests ears.
 - `get_purge_volumes` / `set_purge_volumes`: purge volumes per pair of slots and multiplier; the values of an
   opened file are kept (they were replaced by the estimate from the colors).
+- `cut_object` cuts on any plane and adds connectors, like Bambu Studio's Cut tool: plug (peg and hole with
+  clearance), dowel (holes in both pieces, pins as a separate object) or dovetail; cylinder, square or hexagon,
+  prism or frustum, chamfered; placed one per piece of the cut (two along a long one), N spread over it, or at
+  given points; holes keep 2 mm from the edge and 1 mm of material below, and get shallower where a piece is thin.
+  The peg goes on the piece whose cut face is up. Modifiers and negative parts are cut with the object.
 - New projects use the build plate picked in Bambu Studio for that printer (`build_plate` in the summary).
 
 Fixed
@@ -41,6 +46,8 @@ Fixed
 - AMS spools without RFID that were never set are `unknown`, not empty.
 - Calibration prints: larger, deeper numbers on the temperature tower and the flow squares.
 - `check_print_risks` no longer advises a brim to a part that already has one.
+- `cut_object`: the upper piece lies on its cut face (with `flip_top`, the default, it was turned upside down onto
+  its top). `flip_top` is replaced by `place` (auto, cut_down, keep).
 
 ## 0.2.0 (unreleased)
 

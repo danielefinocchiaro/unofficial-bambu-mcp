@@ -1,5 +1,7 @@
 """Unit tests. The ones that need Bambu Studio profiles are skipped when it is not installed."""
 
+import math
+
 import numpy as np
 import pytest
 
@@ -202,13 +204,6 @@ def test_lay_flat_picks_biggest_face():
     assert area == pytest.approx(600, rel=1e-3)
     h = np.ptp(geometry.rotate(v, 37, "x") @ R.T, axis=0)[2]
     assert h == pytest.approx(10, abs=1e-6)
-
-
-def test_split_z():
-    v, t = geometry.cylinder(20, 30)
-    below, above = geometry.split_z(v, t, 12)
-    assert np.ptp(below[0], axis=0)[2] == pytest.approx(12, abs=1e-6)
-    assert np.ptp(above[0], axis=0)[2] == pytest.approx(18, abs=1e-6)
 
 
 @needs_bambu
@@ -641,3 +636,99 @@ def test_purge_volumes_set_kept_and_reset(tmp_path, monkeypatch):
     assert s.get_purge_volumes()["set_by_hand"] == []
     t = s.set_purge_volumes(reset=True)
     assert t["multiplier"] == 1 and t["volumes_mm3"][0][2] == auto[0][2]
+
+
+# ---------------------------------------------------------------- cutting with connectors
+def _cut_box(**kw):
+    import manifold3d as m3
+
+    from unofficial_bambu_mcp import cutting
+    box = m3.Manifold.cube((60, 40, 30), True).translate((0, 0, 15))
+    return cutting, box, cutting.cut([(box, "box", True)], (0, 0, 15), kw.pop("normal", (0, 0, 1)), **kw)
+
+
+def test_cut_upper_piece_lies_on_its_cut():
+    import manifold3d as m3
+
+    from unofficial_bambu_mcp import cutting
+    cone = m3.Manifold.cylinder(40, 20, 2, 96)
+    res = cutting.cut([(cone, "cone", True)], (0, 0, 20), (0, 0, 1))
+    top = res["B"][0][0]
+    assert top.bounding_box()[2] == pytest.approx(0, abs=1e-6)
+    assert top.slice(0.01).area() > 300                 # the 22 mm cut face, not the 4 mm tip
+
+
+def test_cut_plug_peg_fits_hole_with_clearance():
+    cutting, box, res = _cut_box(connector="plug", clearance=0.2)
+    assert res["male"] == "A" and len(res["connectors"]) == 1 and res["connectors"][0]["at"] == [0.0, 0.0, 15.0]
+    (a, _), (b, _) = res["A"][0], res["B"][0]
+    assert a.status() == b.status() and a.bounding_box()[5] == pytest.approx(15 + res["depth"])   # the peg is up
+    b0 = cutting.from_frame(b, *cutting.frame((0, 0, 15), (0, 0, 1))[:2])      # B back where it was
+    assert (a ^ b0).volume() < 1e-6                                           # no overlap once assembled
+    peg = a.slice(18).area()
+    hole = 60 * 40 - b0.slice(18).area()
+    assert hole - peg == pytest.approx(math.pi * (5.2 ** 2 - 5 ** 2), rel=0.05)                # 0.2 mm all around
+
+
+def test_cut_dowel_holes_both_sides_and_pin():
+    cutting, box, res = _cut_box(connector="dowel", place="cut_down", count=2, shape="square")
+    assert len(res["connectors"]) == 2 and res["pins"] is not None and len(res["pins"].decompose()) == 2
+    for side in ("A", "B"):
+        m = res[side][0][0]
+        assert m.volume() < 60 * 40 * 15 - 1 and m.bounding_box()[2] == pytest.approx(0, abs=1e-6)
+
+
+def test_cut_connectors_refused_or_shortened_where_needed():
+    import manifold3d as m3
+
+    from unofficial_bambu_mcp import cutting
+    with pytest.raises(ValueError, match="sideways"):
+        _cut_box(connector="plug", normal=(1, 0, 0))
+    cone = m3.Manifold.cylinder(40, 20, 2, 96)
+    res = cutting.cut([(cone, "cone", True)], (0, 0, 20), (0, 0, 1), connector="plug", size=8, depth=15)
+    assert res["connectors"][0]["depth"] < 15                                 # the narrowing top is too thin
+    _, _, res = _cut_box(connector="plug", positions=[(29, 0, 15)])
+    assert res["connectors"] == [] and "edge" in res["skipped"][0]["why"]
+
+
+def test_cut_connector_positions():
+    import manifold3d as m3
+
+    from unofficial_bambu_mcp import cutting
+    legs = cutting._union([m3.Manifold.cube((10, 10, 40), True).translate((x, y, 20)) for x in (-30, 30) for y in (-20, 20)])
+    res = cutting.cut([(legs, "legs", True)], (0, 0, 20), (0, 0, 1), connector="plug")
+    assert sorted(tuple(c["at"][:2]) for c in res["connectors"]) == [(-30, -20), (-30, 20), (30, -20), (30, 20)]
+    bar = m3.Manifold.cube((120, 20, 10), True).translate((0, 0, 5))
+    res = cutting.cut([(bar, "bar", True)], (0, 0, 5), (0, 0, 1), connector="plug", count=3)
+    xs = sorted(c["at"][0] for c in res["connectors"])
+    assert xs[1] == pytest.approx(0, abs=0.01) and xs[2] == pytest.approx(-xs[0], abs=0.01)
+
+
+@needs_bambu
+def test_cut_object_with_plug_slices(tmp_path, monkeypatch):
+    monkeypatch.setenv("UBMCP_DIR", str(tmp_path))
+    from unofficial_bambu_mcp import server as s
+    s.new_project("cut", "P1S")
+    s.add_shape("box", width=40, depth=30, height=30, name="block", x=100, y=100)
+    s.add_modifier("block", {"sparse_infill_density": "100%"}, z_from=20)
+    res = s.cut_object("block", 15, connector="plug", shape="hexagon", style="frustum")
+    assert res["connectors"]["peg_on"] == "block bottom" and len(res["connectors"]["placed"]) == 1
+    names = {p["name"] for p in res["pieces"]}
+    assert names == {"block bottom", "block top"}
+    top = s.P().find("block top")[1]
+    assert any(p.subtype == "modifier_part" for p in top.parts)              # the modifier went with its piece
+    plates = s.slice_project()["plates"]
+    assert plates[0]["warnings"] == []
+
+
+def test_cut_dovetail_slides_along_the_cut():
+    cutting, box, res = _cut_box(connector="dovetail", clearance=0.2)
+    (k,) = res["connectors"]
+    assert k["along"] == [1.0, 0.0, 0.0] and res["male"] == "A"                # along the 60 mm side
+    a = res["A"][0][0]
+    b0 = cutting.from_frame(res["B"][0][0], *cutting.frame((0, 0, 15), (0, 0, 1))[:2])
+    assert (a ^ b0).volume() < 1e-6 and a.bounding_box()[0] == pytest.approx(-30)   # flush with the ends
+    low, high = a.slice(15.5).area() / 60, a.slice(15 + k["depth"] - 0.5).area() / 60
+    assert high > low + 1                                                     # wider at the top: it locks
+    slot = (60 * 40 - b0.slice(15.5).area()) / 60
+    assert slot - low == pytest.approx(0.4, abs=0.05)                         # 0.2 mm on each side
