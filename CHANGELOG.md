@@ -30,7 +30,9 @@ Added
   clearance), dowel (holes in both pieces, pins as a separate object) or dovetail; cylinder, square or hexagon,
   prism or frustum, chamfered; placed one per piece of the cut (two along a long one), N spread over it, or at
   given points; holes keep 2 mm from the edge and 1 mm of material below, and get shallower where a piece is thin.
-  The peg goes on the piece whose cut face is up. Modifiers and negative parts are cut with the object.
+  The peg goes on the piece whose cut face is up. Modifiers and negative parts are cut with the object, and
+  painted colors, seams and supports stay on the pieces (manifold3d tells which original triangle each new one
+  comes from; a triangle split by the cut takes the color covering most of it).
 - New projects use the build plate picked in Bambu Studio for that printer (`build_plate` in the summary).
 
 Fixed

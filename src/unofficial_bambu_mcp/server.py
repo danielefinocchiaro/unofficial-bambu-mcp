@@ -12,7 +12,7 @@ import numpy as np
 from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from . import brim, calibration, cutting, geometry, presets, preview, printer, slicer, studio, threemf
+from . import brim, calibration, cutting, geometry, paint, presets, preview, printer, slicer, studio, threemf
 from .project import LayerGcode, Obj, Part, Plate, Project, next_free_path
 
 INSTRUCTIONS = """Work on Bambu Studio projects (.3mf) for Bambu Lab printers. Typical flow:
@@ -1266,7 +1266,7 @@ def cut_object(object: str, z: float = 0, keep: str = "both", normal: list[float
     count: 0 = one per piece of the cut (two along a long one), N = spread over the cut; positions: [[x, y], ...] or
     [[x, y, z]] in plate mm, taken on the plane (for a dovetail: a point on its middle line). Holes keep 2 mm of material from the
     edge and get shallower where a piece is thin; connectors that do not fit are listed as skipped.
-    Modifiers and negative parts are cut too; painted colors are not kept."""
+    Modifiers, negative parts and painted colors are kept on the pieces."""
     pr = P(True)
     pi, o = pr.find(object)
     if keep not in ("both", "bottom", "top"):
@@ -1283,9 +1283,12 @@ def cut_object(object: str, z: float = 0, keep: str = "both", normal: list[float
     else:
         raise ValueError("point is [x, y, z] in plate mm")
     nrm = normal or [0.0, 0.0, 1.0]
-    parts, notes = [], []
+    parts, notes, tracked = [], [], {}
     for p in o.parts:
-        m = geometry.to_manifold(p.verts, p.tris)
+        if p.tri_attrs:                                  # painted: its triangles are followed through the cut
+            m, tracked[id(p)] = paint.tracked(p.verts, p.tris)
+        else:
+            m = geometry.to_manifold(p.verts, p.tris)
         if m.status() != geometry.m3.Error.NoError or m.is_empty():
             if p.subtype == "normal_part":
                 raise ValueError(f"part '{p.name}' is not a closed solid (see check_object): it cannot be cut")
@@ -1314,9 +1317,13 @@ def cut_object(object: str, z: float = 0, keep: str = "both", normal: list[float
     def build(items, label):
         new = []
         for m, p in items:
-            if not m.is_empty():
-                v, t = geometry.from_manifold(m)
-                new.append(Part(p.name, v, t, p.filament, p.subtype, meta=dict(p.meta)))
+            if m.is_empty():
+                continue
+            if id(p) in tracked:
+                v, t, attrs = paint.carry(m, tracked[id(p)], p.verts, p.tris, p.tri_attrs)
+            else:
+                (v, t), attrs = geometry.from_manifold(m), {}
+            new.append(Part(p.name, v, t, p.filament, p.subtype, tri_attrs=attrs, meta=dict(p.meta)))
         if not any(q.subtype == "normal_part" for q in new):
             return None
         return Obj(pr.unique_name(f"{o.name} {label}"), new, settings=dict(settings))
@@ -1354,8 +1361,9 @@ def cut_object(object: str, z: float = 0, keep: str = "both", normal: list[float
         if res["skipped"]:
             out["skipped"] = [{**k, "at": [round(float(v), 1) for v in np.asarray(k["at"]) + off]} if "at" in k else k
                               for k in res["skipped"]]
-    if any(p.tri_attrs for p in o.parts):
-        notes.append("painted colors, seams and supports are not kept on the pieces")
+    if tracked:
+        notes.append("painted colors, seams and supports are kept; a triangle split by the cut takes the color "
+                     "covering most of it, and the new faces (cut, holes, pegs) take the part's filament")
     if o.brim_ears:
         notes.append("the brim ears were not kept on the pieces: add_brim_ears on them if needed")
     if notes:

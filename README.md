@@ -143,7 +143,7 @@ flattened the way the app does. Details in [docs/how-it-works.md](docs/how-it-wo
 
 - Single-nozzle printers; dual-nozzle machines (H2D) need settings that are not handled.
 - Variable layer height and height-range modifiers in opened projects are not carried over (you get a warning).
-- First-layer tests and cut pieces do not keep painted colors.
+- First-layer tests do not keep painted colors.
 - Bambu Studio re-slices a project when it opens it; to see a plate sliced and ready to print in the app, use
   `send_to_printer`.
 

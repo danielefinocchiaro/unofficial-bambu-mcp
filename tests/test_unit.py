@@ -732,3 +732,32 @@ def test_cut_dovetail_slides_along_the_cut():
     assert high > low + 1                                                     # wider at the top: it locks
     slot = (60 * 40 - b0.slice(15.5).area()) / 60
     assert slot - low == pytest.approx(0.4, abs=0.05)                         # 0.2 mm on each side
+
+
+# ---------------------------------------------------------------- painting through booleans
+def test_paint_strings():
+    from unofficial_bambu_mcp import paint
+    assert [paint.leaf(k) for k in (0, 1, 2, 3, 4, 17, 18)] == ["", "4", "8", "0C", "1C", "EC", "0FC"]
+    for k in (1, 2, 3, 4, 17, 18, 40):
+        assert paint.areas(paint.leaf(k)) == {k: 1.0}
+    # one triangle split in four (code 3), children painted 1, 1, 2, 1: three quarters filament 1
+    assert paint.areas("48443") == {1: 0.75, 2: 0.25} and paint.dominant("48443") == "4"
+
+
+def test_cut_keeps_painting():
+    from unofficial_bambu_mcp import cutting, geometry, paint
+    v, t = geometry.box(40, 40, 20)
+    n = np.cross(v[t][:, 1] - v[t][:, 0], v[t][:, 2] - v[t][:, 0])
+    colors = ["8" if nz > 0.5 else ("48443" if abs(nz) < 0.5 else "") for nz in n[:, 2] / np.linalg.norm(n, axis=1)]
+    m, oid = paint.tracked(v, t)
+    res = cutting.cut([(m, "box", True)], (0, 0, 10), (0, 0, 1), connector="plug")
+    tv, tt, attrs = paint.carry(res["B"][0][0], oid, v, t, {"paint_color": colors})
+    col = attrs["paint_color"]
+    tn = np.cross(tv[tt][:, 1] - tv[tt][:, 0], tv[tt][:, 2] - tv[tt][:, 0])
+    tn = tn / np.linalg.norm(tn, axis=1)[:, None]
+    face_up = tn[:, 2] > 0.5          # the top piece keeps its orientation: its painted top still faces up
+    lowest = tv[tt][:, :, 2].max(1) < 0.01
+    assert all(c == "8" for c, up, low in zip(col, face_up, lowest, strict=True) if up and not low)
+    assert all(c == "" for c, low in zip(col, lowest, strict=True) if low)      # the cut face and the hole: base
+    sides = [c for c, nz in zip(col, tn[:, 2], strict=True) if abs(nz) < 0.5 and c]
+    assert sides and set(sides) <= {"48443", "4"}                             # split sides take the main color

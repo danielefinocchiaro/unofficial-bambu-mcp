@@ -536,7 +536,7 @@ mm, or the dovetail's narrow width (0 = from the cut); depth: peg, pin or doveta
 count: 0 = one per piece of the cut (two along a long one), N = spread over the cut; positions: [[x, y], ...] or
 [[x, y, z]] in plate mm, taken on the plane (for a dovetail: a point on its middle line). Holes keep 2 mm of material from the
 edge and get shallower where a piece is thin; connectors that do not fit are listed as skipped.
-Modifiers and negative parts are cut too; painted colors are not kept.
+Modifiers, negative parts and painted colors are kept on the pieces.
 
 | Parameter | Type | Default |
 |---|---|---|
