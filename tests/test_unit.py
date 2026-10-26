@@ -475,6 +475,33 @@ def test_process_and_printer_presets_edit_rename_delete(studio_user):
     assert user_presets.read_info(path)["sync_info"] == "update"
 
 
+@needs_bambu
+def test_presets_deleted_in_bambu_studio_while_running(studio_user):
+    """Bambu Studio deletes a user preset while the server runs: lists, edits and projects see it gone."""
+    import os
+
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    from unofficial_bambu_mcp import server as s
+    s.new_project("d", "P1S", filaments=[{"preset": "Bambu PLA Basic", "color": "#FFFFFF"}])
+    s.set_setting("nozzle_temperature", "212", slot=1)
+    path = s.save_filament_preset(1, "Gone PLA")["file"]
+    s.new_project("d2", "P1S", filaments=[{"preset": "Gone PLA", "color": "#FFFFFF"}])
+    assert "Gone PLA" in {p["name"] for p in s.list_user_presets()}
+    os.remove(path)                                            # what Bambu Studio's Delete does
+    os.remove(path[:-5] + ".info")
+    assert "Gone PLA" not in {p.get("name") for p in s.list_user_presets()}
+    for call in (lambda: s.edit_preset("filament", "Gone PLA", {"nozzle_temperature": "210"}),
+                 lambda: s.rename_preset("filament", "Gone PLA", "Back PLA"),
+                 lambda: s.delete_preset("filament", "Gone PLA")):
+        with pytest.raises(ToolError, match="no user filament preset named 'Gone PLA'"):
+            call()
+    with pytest.raises(ToolError, match="slot 1 no longer exists"):
+        s.get_project()
+    s.set_filament(1, "Bambu PLA Basic")
+    assert s.get_project()["filaments"][0]["preset"].startswith("Bambu PLA Basic")
+
+
 def _cube_xml(oid, size):
     s = size
     vs = [(0, 0, 0), (s, 0, 0), (s, s, 0), (0, s, 0), (0, 0, s), (s, 0, s), (s, s, s), (0, s, s)]

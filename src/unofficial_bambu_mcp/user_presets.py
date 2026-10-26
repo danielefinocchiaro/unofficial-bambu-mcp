@@ -307,6 +307,8 @@ def save(kind, name, base, values, replace=False):
 
 # ---------------------------------------------------------------- managing
 def _user_path(kind, name):
+    if presets.exists(kind, name) and not os.path.exists(presets.path_of(kind, name)):
+        presets.refresh()                                   # deleted on disk since it was read
     if not presets.exists(kind, name):
         close = [n for k, n in presets.names() if k == kind and presets.source(k, n) == "user"
                  and name.lower() in n.lower()][:10]
@@ -342,12 +344,18 @@ def listing(kinds=("filament", "process", "machine")):
     out = []
     for kind in kinds:
         for n in sorted((n for k, n in presets.names() if k == kind and presets.source(k, n) == "user"), key=str.lower):
-            path, d = presets.path_of(kind, n), presets.raw(kind, n)
+            path = presets.path_of(kind, n)
+            try:
+                d = presets.raw(kind, n)
+                mtime = os.path.getmtime(path)
+            except OSError:
+                out.append({"kind": SHOWN[kind], "name": n, "warning": "its file was deleted while reading the list"})
+                continue
             own = {k: _short(v) for k, v in sorted(d.items()) if k not in META and k not in VARIANT_KEYS[kind]
                    and k != SETTINGS_ID[kind]}
             entry = {"kind": SHOWN[kind], "name": n, "inherits": d.get("inherits") or None,
                      "in_cloud": bool(in_cloud(path)),
-                     "modified": time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(path)))}
+                     "modified": time.strftime("%Y-%m-%d %H:%M", time.localtime(mtime))}
             if d.get("inherits"):
                 entry["changes"] = own
             else:

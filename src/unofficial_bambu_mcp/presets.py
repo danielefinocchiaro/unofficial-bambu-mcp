@@ -74,6 +74,32 @@ def _index():
     return idx
 
 
+_user_state = None
+
+
+def _user_files():
+    """(preset folder, (kind, file, mtime)...) of the user's presets: what Bambu Studio changes on disk."""
+    files = []
+    for kind in KINDS:
+        ud = studio.user_dir(kind)
+        try:
+            with os.scandir(ud or "") as it:
+                files += [(kind, e.name, e.stat().st_mtime_ns) for e in it if e.name.endswith(".json")]
+        except OSError:
+            continue
+    return studio.user_id(), tuple(sorted(files))
+
+
+def refresh_if_changed():
+    """Forget what was read about presets when the user's preset files changed since the last call (saved, renamed
+    or deleted in Bambu Studio while the server runs). System presets change only with an app update."""
+    global _user_state
+    state = _user_files()
+    if state != _user_state:
+        refresh()
+        _user_state = state
+
+
 def refresh():
     _index.cache_clear()
     _profile_keys.cache_clear()

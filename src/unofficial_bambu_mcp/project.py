@@ -267,6 +267,15 @@ class Project:
     # ------------------------------------------------------------ settings
     def preset_settings(self):
         """(machine, process, [filament...]) flattened settings."""
+        for i, (n, _) in enumerate(self.filaments):
+            if not presets.exists("filament", n):
+                raise presets.PresetError(f"the filament preset '{n}' of slot {i + 1} no longer exists (deleted or "
+                                          f"renamed in Bambu Studio?): pick another with set_filament(slot={i + 1}, ...)")
+        for kind, n, how in (("process", self.process, "set_printer(..., process=...)"),
+                             ("machine", self.machine, "set_printer(...)")):
+            if not presets.exists(kind, n):
+                raise presets.PresetError(f"the {kind} preset '{n}' of this project no longer exists (deleted or "
+                                          f"renamed in Bambu Studio?): pick another with {how}")
         return (presets.settings("machine", self.machine), presets.settings("process", self.process),
                 [presets.settings("filament", n) for n, _ in self.filaments])
 

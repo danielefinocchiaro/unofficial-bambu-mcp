@@ -40,6 +40,7 @@ def tool():
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
             try:
+                presets.refresh_if_changed()
                 return fn(*args, **kwargs)
             except (ValueError, LookupError, OSError, RuntimeError, SyntaxError, zipfile.BadZipFile) as e:
                 raise ToolError(str(e) or type(e).__name__) from e

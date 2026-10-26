@@ -66,6 +66,9 @@ Fixed
   nothing in it: Bambu profiles never write these keys, so they were not known as filament settings. They are now
   set per slot (in projects with several filaments too) and saved; `replace=True` with no changes is an error and
   leaves the file alone. Bambu printers ignore a preset's K (no M900 in the G-code): the answer says so.
+- User presets saved, renamed or deleted in Bambu Studio while the server runs are seen at the next call (the
+  list of presets was read once): `list_user_presets` failed on a deleted file, and a project whose preset was
+  deleted now says which slot to change.
 - `cut_object`: the upper piece lies on its cut face (with `flip_top`, the default, it was turned upside down onto
   its top). `flip_top` is replaced by `place` (auto, cut_down, keep).
 
