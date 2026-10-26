@@ -761,3 +761,86 @@ def test_cut_keeps_painting():
     assert all(c == "" for c, low in zip(col, lowest, strict=True) if low)      # the cut face and the hole: base
     sides = [c for c, nz in zip(col, tn[:, 2], strict=True) if abs(nz) < 0.5 and c]
     assert sides and set(sides) <= {"48443", "4"}                             # split sides take the main color
+
+
+# ---------------------------------------------------------------- arrange by real outlines
+def _placed(s, plate):
+    from shapely import affinity
+
+    from unofficial_bambu_mcp import arrange
+    pr = s.P()
+    cfg = pr.config()
+    return [(o, affinity.translate(arrange.footprint(o, cfg), o.at[0], o.at[1])) for o in pr.plates[plate - 1].objects]
+
+
+@needs_bambu
+def test_arrange_spreads_evenly_or_says_what_is_left(tmp_path, monkeypatch):
+    monkeypatch.setenv("UBMCP_DIR", str(tmp_path))
+    from unofficial_bambu_mcp import server as s
+    s.new_project("arr", "P1S")
+    for k in range(6):
+        s.add_shape("box", width=60, depth=60, height=5, name=f"b{k}")
+    res = s.arrange(plates=2)
+    assert res["applied"] and [p["objects"] for p in res["plates"]] == [3, 3]
+    for k in range(6, 20):
+        s.add_shape("box", width=60, depth=60, height=5, name=f"b{k}", plate=1, x=128, y=128)
+    before = [tuple(o.at) for _, o in s.P().objects()]
+    res = s.arrange(plates=2)                         # 9 boxes of 60 mm per plate: 20 need 3 plates
+    assert not res["applied"] and res["plates_needed"] == 3 and len(res["does_not_fit"]) == 2
+    assert [tuple(o.at) for _, o in s.P().objects()] == before                 # nothing moved
+    res = s.arrange(plates=-1)
+    assert res["applied"] and sum(p["objects"] for p in res["plates"]) == 20
+    for p in res["plates"]:
+        shapes = [sh for _, sh in _placed(s, p["plate"])]
+        assert all(a.distance(b) >= 6 - 0.05 for i, a in enumerate(shapes) for b in shapes[i + 1:])
+
+
+@needs_bambu
+def test_arrange_materials_tower_and_calibration_corner(tmp_path, monkeypatch):
+    from shapely.geometry import Polygon, box
+    monkeypatch.setenv("UBMCP_DIR", str(tmp_path))
+    from unofficial_bambu_mcp import server as s
+    s.new_project("arr", "P1S", filaments=[{"color": "#000000"}, {"color": "#FFFFFF"}])
+    for k in range(4):
+        s.add_shape("box", width=50, depth=50, height=5, name=f"f{k}", filament=1 + k % 2)
+    res = s.arrange(plates=2, multi_material=False)
+    assert res["applied"]
+    for p in (1, 2):
+        assert len({f for o, _ in _placed(s, p) for f in o.filaments()}) == 1     # one material per plate
+    res = s.arrange(plates=1)
+    tower = box(256 - 4 - 60, 256 - 4 - 60, 256 - 4, 256 - 4)
+    corner = Polygon(s.P().info["exclude"])
+    assert res["applied"] and all(not sh.intersects(tower) and not sh.intersects(corner) for _, sh in _placed(s, 1))
+
+
+@needs_bambu
+def test_arrange_leaves_other_objects_and_aligns_to_y(tmp_path, monkeypatch):
+    monkeypatch.setenv("UBMCP_DIR", str(tmp_path))
+    from unofficial_bambu_mcp import server as s
+    s.new_project("arr", "P1S")
+    s.add_shape("box", width=40, depth=40, height=5, name="fixed", x=128, y=128)
+    s.add_shape("box", width=100, depth=20, height=5, name="bar", x=20, y=200)
+    res = s.arrange(objects=["bar"], align_to_y=True)
+    assert res["applied"] and s.P().find("fixed")[1].at == (128, 128)
+    bar = s.P().find("bar")[1]
+    w, d, _ = bar.size()
+    assert d > w and abs(res["rotated_deg"]["bar"]) == 90
+    shapes = dict((o.name, sh) for o, sh in _placed(s, 1))
+    assert shapes["bar"].distance(shapes["fixed"]) >= 6 - 0.05
+
+
+@needs_bambu
+def test_footprint_counts_brim_and_ears(tmp_path, monkeypatch):
+    monkeypatch.setenv("UBMCP_DIR", str(tmp_path))
+    from unofficial_bambu_mcp import arrange
+    from unofficial_bambu_mcp import server as s
+    s.new_project("arr", "P1S")
+    s.add_shape("box", width=20, depth=20, height=5, name="b")
+    o = s.P().find("b")[1]
+    assert arrange.footprint(o, s.P().config()).bounds == pytest.approx((-10, -10, 10, 10), abs=0.05)
+    s.set_object_setting("b", "brim_type", "outer_only")
+    s.set_object_setting("b", "brim_width", "5")
+    assert arrange.footprint(o, s.P().config()).bounds[0] == pytest.approx(-15.1, abs=0.05)
+    s.set_object_setting("b", "brim_type", "")
+    s.add_brim_ears("b", points=[[o.at[0] + 10, o.at[1]]], radius=4)
+    assert arrange.footprint(o, s.P().config()).bounds[2] == pytest.approx(14, abs=0.05)

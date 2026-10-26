@@ -24,6 +24,13 @@ Added
   points. Kept when opening and saving files, drawn in `preview_plate`. Tested on a print-in-place skeleton:
   ears on all ten fingertips, no brim in the joint gaps of the sliced first layer.
 - `check_print_risks` warns when a full brim would weld a print-in-place model and suggests ears.
+- `arrange` places objects by their real outline seen from above, with brim and brim ears, on a 0.5 mm grid
+  (FFT collision test), lowest place first, then centers each plate and checks the exact distances. Options like
+  Bambu Studio's Arrange dialog: gap, rotation (any step), one material per plate, avoid the calibration corner,
+  align to Y; the prime tower corner stays free on plates with several materials; one plate, given objects or
+  all; `plates` N spreads them evenly over N plates, -1 uses as few as possible. If they do not fit, nothing is
+  moved and the answer lists what is left over and how many plates are needed. 18 snowflakes with brim ears now
+  go in 2 plates (the old rectangles needed 3); Bambu Studio's command line, on hulls, needs 2 mm gaps for that.
 - `get_purge_volumes` / `set_purge_volumes`: purge volumes per pair of slots and multiplier; the values of an
   opened file are kept (they were replaced by the estimate from the colors).
 - `cut_object` cuts on any plane and adds connectors, like Bambu Studio's Cut tool: plug (peg and hole with

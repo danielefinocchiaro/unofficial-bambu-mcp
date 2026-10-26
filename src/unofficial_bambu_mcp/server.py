@@ -12,8 +12,9 @@ import numpy as np
 from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
+from . import arrange as arrange_mod
 from . import brim, calibration, cutting, geometry, paint, presets, preview, printer, slicer, studio, threemf
-from .project import LayerGcode, Obj, Part, Plate, Project, next_free_path
+from .project import TOWER_BOX, LayerGcode, Obj, Part, Plate, Project, next_free_path
 
 INSTRUCTIONS = """Work on Bambu Studio projects (.3mf) for Bambu Lab printers. Typical flow:
 new_project or open_project -> import_model / add_shape -> move/arrange -> set_filament / set_setting ->
@@ -464,15 +465,26 @@ def check_object(object: str) -> dict:
 
 
 @tool()
-def arrange(plate: int = 0, gap: float = 6.0) -> dict:
-    """Re-place the objects of a plate (0 = all plates) close to the center without overlaps.
-    Objects that do not fit are moved to a new plate."""
+def arrange(plate: int = 0, objects: list[str] | None = None, plates: int = 0, gap: float = 6.0,
+            rotate: bool = False, rotation_step: float = 90.0, multi_material: bool = True,
+            avoid_calibration_area: bool = True, align_to_y: bool = False) -> dict:
+    """Arrange objects by their real outline seen from above, brim and brim ears included, so shapes can nest
+    (like Bambu Studio's Arrange, which only uses convex hulls). gap: mm between those outlines (and from the
+    plate's edge half of it). Which objects: plate N, the named `objects` (ids or names), or all (plate=0).
+    plates: 0 = each object stays on its plate; N = spread them over plates 1..N, evenly; -1 = as few plates as
+    possible. rotate: allow turning them by multiples of rotation_step degrees (e.g. 60 for snowflakes);
+    multi_material false = one material (set of filaments) per plate; avoid_calibration_area: keep off the
+    printer's flow calibration corner (P1S/X1: front left); align_to_y: long side along Y first.
+    Plates with more than one material keep the back right corner free for the prime tower.
+    If something does not fit, nothing is moved: the answer says what is left over and how many plates it needs.
+    Objects not being arranged stay where they are. Look at preview_plate(view='top') afterwards."""
     pr = P(True)
-    moved = pr.arrange([plate] if plate else None, gap)
-    res = _short()
-    if moved:
-        res["moved_to_new_plate"] = [o.name for o in moved]
-    return res
+    if gap < 0:
+        raise ValueError("gap must be 0 or more")
+    return arrange_mod.run(pr, pr.config(), plate=plate, objects=objects, plates=plates, gap=gap, rotate=rotate,
+                           rotation_step=rotation_step, multi_material=multi_material,
+                           avoid_calibration_area=avoid_calibration_area, align_to_y=align_to_y,
+                           tower_box=TOWER_BOX)
 
 
 # ---------------------------------------------------------------- settings

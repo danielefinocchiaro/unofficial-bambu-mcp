@@ -224,13 +224,28 @@ Is the mesh a closed, printable solid? Size, volume, number of separate pieces.
 
 ## `arrange`
 
-Re-place the objects of a plate (0 = all plates) close to the center without overlaps.
-Objects that do not fit are moved to a new plate.
+Arrange objects by their real outline seen from above, brim and brim ears included, so shapes can nest
+(like Bambu Studio's Arrange, which only uses convex hulls). gap: mm between those outlines (and from the
+plate's edge half of it). Which objects: plate N, the named `objects` (ids or names), or all (plate=0).
+plates: 0 = each object stays on its plate; N = spread them over plates 1..N, evenly; -1 = as few plates as
+possible. rotate: allow turning them by multiples of rotation_step degrees (e.g. 60 for snowflakes);
+multi_material false = one material (set of filaments) per plate; avoid_calibration_area: keep off the
+printer's flow calibration corner (P1S/X1: front left); align_to_y: long side along Y first.
+Plates with more than one material keep the back right corner free for the prime tower.
+If something does not fit, nothing is moved: the answer says what is left over and how many plates it needs.
+Objects not being arranged stay where they are. Look at preview_plate(view='top') afterwards.
 
 | Parameter | Type | Default |
 |---|---|---|
 | `plate` | integer | `0` |
+| `objects` | array / null | `None` |
+| `plates` | integer | `0` |
 | `gap` | number | `6.0` |
+| `rotate` | boolean | `False` |
+| `rotation_step` | number | `90.0` |
+| `multi_material` | boolean | `True` |
+| `avoid_calibration_area` | boolean | `True` |
+| `align_to_y` | boolean | `False` |
 
 ## `get_setting`
 
