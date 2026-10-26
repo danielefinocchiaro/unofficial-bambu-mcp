@@ -1,6 +1,6 @@
 # Tools
 
-54 tools, generated from the server code by `scripts/gen_tools_doc.py`.
+60 tools, generated from the server code by `scripts/gen_tools_doc.py`.
 
 ## `bambu_status`
 
@@ -492,8 +492,8 @@ When sending it, turn off the printer's automatic flow dynamics calibration.
 
 ## `save_filament_preset`
 
-Save the filament of a slot, with this project's changes for that slot (temperatures, flow ratio, plate
-temperatures...), as a Bambu Studio user preset; it appears after Bambu Studio restarts.
+Save the filament of a slot, with this project's changes for that slot (temperatures, flow ratio, pressure
+advance, plate temperatures...), as a Bambu Studio user preset; it appears after Bambu Studio restarts.
 A new filament (made from a Generic preset, or with another filament_vendor) is saved like Bambu Studio's
 Create Filament does: its own filament id, so it can be picked for an AMS slot (Device > AMS). Changes to a
 Bambu filament are saved as a variant of it, so its RFID spools still match it.
@@ -505,6 +505,78 @@ filament id, so AMS slots set to it stay valid, and a backup copy is kept. Never
 | `slot` | integer | required |
 | `name` | string | required |
 | `replace` | boolean | `False` |
+
+## `save_process_preset`
+
+Save this project's process changes (layer height, walls, infill, speeds, brim, supports, ironing...:
+the set_setting changes that belong to the process) as a Bambu Studio user process preset, a child of the
+project's process preset, like Save as in Bambu Studio. replace=True updates your user preset with that name
+(a backup copy is kept). It appears after Bambu Studio restarts.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `name` | string | required |
+| `replace` | boolean | `False` |
+
+## `save_printer_preset`
+
+Save this project's printer changes (start/end G-code, retraction, printable area...: the set_setting
+changes that belong to the printer) as a Bambu Studio user printer preset, a child of the project's printer
+preset. replace=True updates your user preset with that name (a backup copy is kept). It appears after
+Bambu Studio restarts.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `name` | string | required |
+| `replace` | boolean | `False` |
+
+## `list_user_presets`
+
+Your own Bambu Studio presets (kind: filament | process | printer; empty = all): the preset each one
+inherits and what it changes, whether it is in your Bambu cloud (then only Bambu Studio can delete or
+rename it), and which presets inherit it. To find system presets too, use search_presets.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `kind` | string | `''` |
+
+## `edit_preset`
+
+Change settings of one of your user presets directly, without a project (a backup copy is kept).
+kind: filament | process | printer. values: {"key": "value"}, e.g. {"pressure_advance": "0.025",
+"enable_pressure_advance": "1"} or {"nozzle_temperature": "215"}; a list gives one value per extruder variant
+(Standard / High Flow nozzle); null removes the key, so the value comes from the parent preset again.
+Bambu system presets are read-only: save a user preset from them first. Bambu Studio sees the change after it
+restarts, and uploads it to your Bambu cloud if the preset is there.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `kind` | string | required |
+| `name` | string | required |
+| `values` | object | required |
+
+## `rename_preset`
+
+Rename one of your user presets (a backup copy is kept). A preset in your Bambu cloud cannot be renamed
+from here, because Bambu Studio would download the old one again: the answer says how to do it in Bambu
+Studio.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `kind` | string | required |
+| `name` | string | required |
+| `new_name` | string | required |
+
+## `delete_preset`
+
+Delete one of your user presets (a backup copy is kept, see the answer). A preset in your Bambu cloud
+cannot be deleted from here, because Bambu Studio would download it again at its next start: only its own
+Delete removes the cloud copy, and the answer says where it is.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `kind` | string | required |
+| `name` | string | required |
 
 ## `sync_with_bambu_studio`
 

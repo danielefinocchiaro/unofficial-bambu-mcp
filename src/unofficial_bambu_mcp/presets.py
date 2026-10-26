@@ -4,12 +4,10 @@ The CLI does not follow "inherits"/"include" when it loads a project, so a proje
 flattened values. This module flattens presets and picks the right filament preset for a printer.
 """
 import glob
-import hashlib
 import json
 import os
-import shutil
-import time
 from functools import lru_cache
+from importlib import resources
 
 from . import studio
 
@@ -19,6 +17,28 @@ META = {"inherits", "include", "name", "from", "setting_id", "instantiation", "t
         "compatible_printers", "compatible_printers_condition", "compatible_prints",
         "compatible_prints_condition", "description", "renamed_from", "version", "base_id", "user_id",
         "updated_time", "filament_settings_id", "print_settings_id", "printer_settings_id"}
+
+# Setting keys that Bambu's system profiles never write, so the profile files alone do not say whose they are
+# (Bambu Studio keeps them in its option lists). The other keys of a project that no profile has are process
+# settings, except PROJECT_KEYS: the plate, the slots, purge volumes, the prime tower... which no preset holds.
+UNLISTED = {
+    "filament": frozenset({"pressure_advance", "enable_pressure_advance", "enable_overhang_bridge_fan", "filament_notes",
+                           "first_x_layer_part_fan_speed", "ironing_fan_speed",
+                           "overhang_threshold_participating_cooling"}),
+    "machine": frozenset({"bed_custom_model", "bed_custom_texture", "before_layer_change_gcode", "printer_notes",
+                          "printing_by_object_gcode", "template_custom_gcode", "thumbnail_size",
+                          "use_firmware_retraction", "use_relative_e_distances", "wrapping_detection_layers"}),
+}
+PROJECT_KEYS = frozenset({
+    "curr_bed_type", "different_settings_to_system", "inherits_group", "print_compatible_printers",
+    "filament_colour", "default_filament_colour", "filament_ids", "filament_self_index", "filament_map",
+    "filament_map_2", "filament_map_mode", "enable_filament_dynamic_map", "filament_nozzle_map", "filament_volume_map",
+    "filament_is_mixed", "filament_mixed_components", "filament_mixed_gradient", "filament_mixed_gradient_curve",
+    "filament_mixed_gradient_per_part", "filament_mixed_gradient_range", "filament_mixed_sublayer_ratios",
+    "flush_multiplier", "flush_multiplier_fast", "flush_volumes_matrix", "flush_volumes_vector", "prime_volume_mode",
+    "wipe_tower_x", "wipe_tower_y", "wipe_tower_rotation_angle", "first_layer_print_sequence",
+    "other_layers_print_sequence", "other_layers_print_sequence_nums", "start_end_points", "extruder_ams_count",
+    "extruder_nozzle_stats", "nozzle_volume_type", "has_filament_switcher", "has_scarf_joint_seam"})
 
 # short names for common single-nozzle printers (any full machine preset name works too)
 PRINTER_ALIASES = {
@@ -56,8 +76,11 @@ def _index():
 
 def refresh():
     _index.cache_clear()
+    _profile_keys.cache_clear()
+    kind_of.cache_clear()
     raw.cache_clear()
     flat.cache_clear()
+    _fid_index.cache_clear()
 
 
 @lru_cache(maxsize=4096)
@@ -85,6 +108,11 @@ def exists(kind, name):
     return (kind, name) in _index()
 
 
+def names():
+    """(kind, name) of every preset, system and user."""
+    return list(_index())
+
+
 @lru_cache(maxsize=2048)
 def _flat_cached(kind, name):
     d = raw(kind, name)
@@ -110,6 +138,51 @@ flat.cache_clear = _flat_cached.cache_clear
 def settings(kind, name):
     """Only the setting keys of a flattened preset (no metadata)."""
     return {k: v for k, v in flat(kind, name).items() if k not in META}
+
+
+@lru_cache(maxsize=1)
+def _template():
+    with resources.files("unofficial_bambu_mcp").joinpath("data/bambu_template.config").open(encoding="utf-8") as f:
+        return json.load(f)
+
+
+def template():
+    """Every setting of a Bambu Studio project with a default value (a new dict)."""
+    return json.loads(json.dumps(_template()))
+
+
+def default(key):
+    return _template().get(key)
+
+
+@lru_cache(maxsize=1)
+def _profile_keys():
+    """{kind: keys that some system profile of that kind sets}."""
+    out = {k: set() for k in KINDS}
+    for (kind, _), (p, src) in _index().items():
+        if src != "system":
+            continue
+        try:
+            with open(p, encoding="utf-8") as f:
+                out[kind].update(json.load(f))
+        except (OSError, ValueError):
+            continue
+    return out
+
+
+@lru_cache(maxsize=1024)
+def kind_of(key):
+    """Whose setting a key is: 'filament', 'process', 'machine', 'project' (only in a project) or None (unknown)."""
+    for kind, keys in UNLISTED.items():
+        if key in keys:
+            return kind
+    if key in PROJECT_KEYS:
+        return "project"
+    pk = _profile_keys()
+    for kind in ("filament", "process", "machine"):
+        if key in pk[kind] and key not in META:
+            return kind
+    return "process" if key in _template() else None
 
 
 def machine_name(printer):
@@ -261,99 +334,3 @@ def _fid_index():
 
 def line_for_filament_id(fid):
     return _fid_index().get(fid)
-
-
-BACKUPS = os.path.expanduser("~/.config/unofficial-bambu-mcp/preset-backups")
-
-
-def _list_value(cur, v):
-    """A value in the shape the preset uses: one entry per extruder variant, or a plain string."""
-    if isinstance(cur, list):
-        return [str(v)] * max(1, len(cur))
-    return str(v)
-
-
-def _filament_ids():
-    ids = set()
-    for (kind, _), (p, _) in _index().items():
-        if kind != "filament":
-            continue
-        try:
-            with open(p, encoding="utf-8") as f:
-                fid = json.load(f).get("filament_id")
-        except (OSError, ValueError):
-            continue
-        if fid:
-            ids.add(fid)
-    return ids
-
-
-def new_filament_id(name):
-    """Id for a new filament, made like Bambu Studio's Create Filament: 'P' + 7 hex digits, not used yet."""
-    taken, seed, k = _filament_ids(), f"{name}@{studio.user_id() or ''}", 0
-    fid = "P" + hashlib.md5(seed.encode()).hexdigest()[:7]
-    while fid in taken:
-        k += 1
-        fid = "P" + hashlib.md5(f"{seed}#{k}".encode()).hexdigest()[:7]
-    return fid
-
-
-def _write(path, out):
-    ver = studio.version() or "02.08.00.00"
-    out["version"] = ".".join(str(int(x)) for x in ver.split("."))
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(dict(sorted(out.items())), f, indent=4)
-    refresh()
-    return path
-
-
-def write_user_filament(name, base, values, machine=None, replace=False):
-    """Save a Bambu Studio user filament preset with `values` (key -> single value); it loads at the next start.
-    machine given: a new filament of its own, as Create Filament makes it ('<name> @<machine>', full settings,
-    own filament_id, no parent), which Bambu Studio lists for AMS slots. Otherwise a variant of the system
-    preset `base` (inherits it, keeps its filament id, so RFID spools of that filament still match).
-    replace: update the existing user preset `name` in place (same filament id, so AMS slots set to it stay
-    valid); the old file is copied to ~/.config/unofficial-bambu-mcp/preset-backups first.
-    Returns (path, saved name, filament_id or None)."""
-    folder = studio.user_dir("filament")
-    if not folder:
-        raise PresetError("Bambu Studio user preset folder not found (sign in to Bambu Studio once)")
-    full = f"{name} @{machine}" if machine and " @" not in name else name
-    target = next((n for n in (name, full) if exists("filament", n)), None)
-    if target and not replace:
-        raise PresetError(f"a filament preset named '{target}' already exists: choose another name, or replace=True")
-    if replace:
-        if not target or source("filament", target) != "user":
-            raise PresetError(f"there is no user filament preset '{name}' to replace")
-        old = raw("filament", target)
-        path = path_of("filament", target)
-        os.makedirs(BACKUPS, exist_ok=True)
-        shutil.copy2(path, os.path.join(BACKUPS, f"{os.path.basename(path)[:-5]} {time.strftime('%Y%m%d-%H%M%S')}.json"))
-        out = dict(old)
-        ref = flat("filament", target)
-        for k, v in values.items():
-            out[k] = _list_value(ref.get(k), v)
-        return _write(path, out), target, out.get("filament_id") or ref.get("filament_id")
-    if machine:
-        fl = flat("filament", base)
-        out = {k: v for k, v in fl.items() if k not in META}
-        for k, v in values.items():
-            out[k] = _list_value(fl.get(k), v)
-        fid = new_filament_id(name)
-        out.update({"name": full, "filament_settings_id": [full], "from": "User", "inherits": "",
-                    "filament_id": fid, "compatible_printers": [machine]})
-        return _write(os.path.join(folder, full.replace("/", "-") + ".json"), out), full, fid
-    if source("filament", base) == "user":
-        base = raw("filament", base).get("inherits") or base
-    if source("filament", base) != "system":
-        raise PresetError(f"'{base}' is not a system filament preset")
-    fl = flat("filament", base)
-    out = {"filament_settings_id": [name], "from": "User", "inherits": base, "name": name}
-    if "filament_extruder_variant" in fl:
-        out["filament_extruder_variant"] = fl["filament_extruder_variant"]
-    for k, v in values.items():
-        out[k] = _list_value(fl.get(k), v)
-    path = os.path.join(folder, name.replace("/", "-") + ".json")
-    if os.path.exists(path):
-        raise PresetError(f"{path} already exists")
-    return _write(path, out), name, None

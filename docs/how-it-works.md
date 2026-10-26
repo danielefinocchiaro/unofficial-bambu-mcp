@@ -25,6 +25,19 @@ folder. The command line does not resolve `inherits` and `include`, so the serve
 and writes the result in the project. Filament names without `@printer` are matched to the printer. New filaments are
 saved as root user presets with their own `filament_id` ("P" + 7 hex digits, like *Create Filament*).
 
+Some settings appear in no Bambu profile, `pressure_advance` and `enable_pressure_advance` for example: the server
+knows which kind of preset they belong to from a short list, so they are set per filament slot and saved. A user
+preset holds only what differs from its parent, one value per extruder variant (Standard, High Flow) for the
+settings that differ by nozzle, as Bambu Studio writes it.
+
+Bambu Studio syncs user presets with the Bambu account through a `.info` file next to each one (`setting_id` in
+the cloud, `updated_time`, `sync_info`). At start it downloads a cloud preset that is missing on disk or newer
+there, and uploads one that is newer on disk. So a preset changed by the server is stamped to be uploaded, and a
+new one gets its parent's id to be created in the cloud, as Bambu Studio does when it saves one. A preset that is
+already in the cloud is not deleted or renamed by the server: Bambu Studio removes the cloud copy only from its own
+Delete button, so a file deleted on disk comes back at the next start. The server says so and how to do it there.
+Bambu Studio reads presets when it starts: every change says to restart it.
+
 ## Slicing and print files
 
 `slice_project` writes a temporary project and runs `bambu-studio --slice N --export-3mf`; times, weights, filament

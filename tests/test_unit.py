@@ -322,39 +322,157 @@ def test_round_negative_part(tmp_path, monkeypatch):
         s.add_modifier("B", kind="negative", shape="sphere")
 
 
-@needs_bambu
-def test_user_filament_presets(tmp_path, monkeypatch):
+@pytest.fixture
+def studio_user(tmp_path, monkeypatch):
+    """An empty Bambu Studio user preset folder in tmp_path: the real presets are never touched."""
     import json
 
-    from unofficial_bambu_mcp import presets
-    monkeypatch.setenv("BAMBU_STUDIO_DATA", str(tmp_path))
-    monkeypatch.setattr(presets, "BACKUPS", str(tmp_path / "backups"))
-    (tmp_path / "user" / "123" / "filament").mkdir(parents=True)
-    (tmp_path / "BambuStudio.conf").write_text(json.dumps({"app": {"preset_folder": "123"}}))
+    from unofficial_bambu_mcp import presets, user_presets
+    data = tmp_path / "studio"
+    for kind in ("filament", "process", "machine"):
+        (data / "user" / "123" / kind).mkdir(parents=True)
+    (data / "BambuStudio.conf").write_text(json.dumps({"app": {"preset_folder": "123"}}))
+    monkeypatch.setenv("BAMBU_STUDIO_DATA", str(data))
+    monkeypatch.setenv("UBMCP_DIR", str(tmp_path / "out"))
+    monkeypatch.setattr(user_presets, "BACKUPS", str(tmp_path / "backups"))
     presets.refresh()
+    yield tmp_path
+    monkeypatch.undo()
+    presets.refresh()
+
+
+@needs_bambu
+def test_user_filament_presets(studio_user):
+    import json
+
+    from unofficial_bambu_mcp import presets, user_presets
     m = "Bambu Lab P1S 0.4 nozzle"
-    try:
-        # a new filament, like Create Filament: no parent, its own id, listed for AMS slots
-        path, name, fid = presets.write_user_filament("Test PLA X", "Generic PLA", {"nozzle_temperature": "215"}, machine=m)
-        d = json.load(open(path))
-        assert name == f"Test PLA X @{m}" and d["inherits"] == "" and d["compatible_printers"] == [m]
-        assert fid.startswith("P") and len(fid) == 8 and d["filament_id"] == fid
-        assert d["nozzle_temperature"] == ["215"] and d["filament_type"] == ["PLA"]
-        assert presets.filament_for("Test PLA X", m) == name
-        with pytest.raises(presets.PresetError):
-            presets.write_user_filament("Test PLA X", "Generic PLA", {}, machine=m)
-        # after a calibration: same file, same id, old one backed up
-        p2, _, fid2 = presets.write_user_filament("Test PLA X", name, {"filament_flow_ratio": "0.95"}, machine=m, replace=True)
-        d2 = json.load(open(p2))
-        assert p2 == path and fid2 == fid and d2["filament_flow_ratio"] == ["0.95"] and d2["nozzle_temperature"] == ["215"]
-        assert len(list((tmp_path / "backups").iterdir())) == 1
-        # a tweak of a Bambu filament stays a child of it, so RFID spools still match
-        p3, _, fid3 = presets.write_user_filament("My Bambu PLA", "Bambu PLA Basic @BBL P1S 0.4 nozzle", {"nozzle_temperature": "225"})
-        d3 = json.load(open(p3))
-        assert fid3 is None and d3["inherits"] == "Bambu PLA Basic @BBL P1S 0.4 nozzle" and "filament_id" not in d3
-    finally:
-        monkeypatch.undo()
-        presets.refresh()
+    # a new filament, like Create Filament: no parent, its own id, listed for AMS slots
+    r = user_presets.write_filament("Test PLA X", "Generic PLA", {"nozzle_temperature": "215"}, machine=m)
+    path, name, fid = r["file"], r["name"], r["filament_id"]
+    d = json.load(open(path))
+    assert name == f"Test PLA X @{m}" and d["inherits"] == "" and d["compatible_printers"] == [m]
+    assert fid.startswith("P") and len(fid) == 8 and d["filament_id"] == fid
+    assert d["nozzle_temperature"] == ["215"] and d["filament_type"] == ["PLA"]
+    assert presets.filament_for("Test PLA X", m) == name
+    with pytest.raises(presets.PresetError):
+        user_presets.write_filament("Test PLA X", "Generic PLA", {}, machine=m)
+    # after a calibration: same file, same id, old one backed up
+    r2 = user_presets.write_filament("Test PLA X", name, {"filament_flow_ratio": "0.95"}, machine=m, replace=True)
+    d2 = json.load(open(r2["file"]))
+    assert r2["file"] == path and r2["filament_id"] == fid and d2["filament_flow_ratio"] == ["0.95"]
+    assert d2["nozzle_temperature"] == ["215"] and r2["backup"].startswith(str(studio_user / "backups"))
+    assert len(list((studio_user / "backups").glob("*.json"))) == 1
+    # a tweak of a Bambu filament stays a child of it, so RFID spools still match
+    r3 = user_presets.write_filament("My Bambu PLA", "Bambu PLA Basic @BBL P1S 0.4 nozzle", {"nozzle_temperature": "225"})
+    d3 = json.load(open(r3["file"]))
+    assert "filament_id" not in r3 and d3["inherits"] == "Bambu PLA Basic @BBL P1S 0.4 nozzle" and "filament_id" not in d3
+    # one value per extruder variant, as the parent has it, and a .info for Bambu Studio's cloud sync
+    variants = presets.flat("filament", "Bambu PLA Basic @BBL P1S 0.4 nozzle")["filament_extruder_variant"]
+    assert d3["nozzle_temperature"] == ["225"] * len(variants) and d3["filament_extruder_variant"] == variants
+    info = user_presets.read_info(r3["file"])
+    assert info["setting_id"] == "" and info["user_id"] == "123"
+    assert info["base_id"] == presets.raw("filament", "Bambu PLA Basic @BBL P1S 0.4 nozzle")["setting_id"]
+
+
+@needs_bambu
+def test_pressure_advance_is_a_filament_setting_and_is_saved(studio_user):
+    """Bambu's profiles never write pressure_advance: it used to be dropped (kind None) and 'saved' as nothing."""
+    import json
+
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    from unofficial_bambu_mcp import server as s
+    s.new_project("k", "P1S", filaments=[{"preset": "Bambu PLA Basic", "color": "#FFFFFF"},
+                                         {"preset": "Bambu PLA Matte", "color": "#000000"}])
+    r = s.set_setting("pressure_advance", "0.025", slot=1)
+    assert r["kind"] == "filament" and r["value"][0] == "0.025" and len(r["value"]) == 2 and r["value"][1] != "0.025"
+    assert "M900" in r["pressure_advance_note"]                # Bambu printers take K from the AMS slot
+    assert s.set_setting("enable_pressure_advance", "1", slot=1)["kind"] == "filament"
+    cfg = s.P().config()
+    assert cfg["pressure_advance"][0] == "0.025" and len(cfg["pressure_advance"]) == 2
+    res = s.save_filament_preset(1, "PLA K test")
+    assert res["values"] == {"pressure_advance": "0.025", "enable_pressure_advance": "1"}
+    d = json.load(open(res["file"]))
+    assert d["pressure_advance"] == ["0.025"] and d["enable_pressure_advance"] == ["1"]
+    # a project with the new preset gets its K; with nothing changed, replace fails and the file stays as it is
+    s.new_project("k2", "P1S", filaments=[{"preset": "PLA K test", "color": "#FFFFFF"}])
+    assert s.P().config()["pressure_advance"] == ["0.025"]
+    before = open(res["file"]).read()
+    with pytest.raises(ToolError, match="no changes"):
+        s.save_filament_preset(1, "PLA K test", replace=True)
+    assert open(res["file"]).read() == before
+    # changed directly in the preset, then saved again from a project
+    s.edit_preset("filament", "PLA K test", {"pressure_advance": "0.03"})
+    assert json.load(open(res["file"]))["pressure_advance"] == ["0.03"]
+    s.new_project("k3", "P1S", filaments=[{"preset": "PLA K test", "color": "#FFFFFF"}])
+    s.set_setting("pressure_advance", "0.028", slot=1)
+    s.save_filament_preset(1, "PLA K test", replace=True)
+    d = json.load(open(res["file"]))
+    assert d["pressure_advance"] == ["0.028"] and d["enable_pressure_advance"] == ["1"]
+
+
+@needs_bambu
+def test_process_and_printer_presets_edit_rename_delete(studio_user):
+    import json
+
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    from unofficial_bambu_mcp import presets, user_presets
+    from unofficial_bambu_mcp import server as s
+    s.new_project("p", "P1S")
+    parent = s.P().process
+    s.set_setting("wall_loops", "4")
+    s.set_setting("brim_type", "no_brim")
+    s.set_setting("inner_wall_speed", "250")
+    s.set_setting("nozzle_temperature", "215")                 # a filament setting: not in the process preset
+    res = s.save_process_preset("My strong")
+    d = json.load(open(res["file"]))
+    assert d["inherits"] == parent and d["print_settings_id"] == "My strong" and "nozzle_temperature" not in d
+    assert d["wall_loops"] == "4" and d["brim_type"] == "no_brim"
+    variants = presets.flat("process", parent)["print_extruder_variant"]
+    assert d["inner_wall_speed"] == ["250"] * len(variants) and d["print_extruder_variant"] == variants
+    with pytest.raises(ToolError, match="already exists"):
+        s.save_process_preset("My strong")
+    s.set_setting("machine_start_gcode", ";hello")
+    p2 = s.save_printer_preset("My P1S")["file"]
+    d2 = json.load(open(p2))
+    assert d2["inherits"] == "Bambu Lab P1S 0.4 nozzle" and d2["machine_start_gcode"] == ";hello"
+    assert d2["printer_settings_id"] == "My P1S" and "wall_loops" not in d2
+    # edited directly: checked, shaped, backed up; None goes back to the parent's value
+    e = s.edit_preset("process", "My strong", {"sparse_infill_density": "25%", "wall_loops": None,
+                                               "outer_wall_speed": ["150"] * len(variants)})
+    d = json.load(open(res["file"]))
+    assert d["sparse_infill_density"] == "25%" and "wall_loops" not in d and d["outer_wall_speed"] == ["150"] * len(variants)
+    assert e["values"]["wall_loops"] == presets.flat("process", parent)["wall_loops"] and e["backup"]
+    with pytest.raises(ToolError, match="is a number"):
+        s.edit_preset("process", "My strong", {"wall_loops": "many"})
+    with pytest.raises(ToolError, match="filament setting"):
+        s.edit_preset("process", "My strong", {"nozzle_temperature": "200"})
+    with pytest.raises(ToolError, match="takes 1 value or"):
+        s.edit_preset("process", "My strong", {"outer_wall_speed": ["1"] * (len(variants) + 1)})
+    with pytest.raises(ToolError, match="system preset"):
+        s.edit_preset("process", parent, {"wall_loops": "3"})
+    listed = {(p["kind"], p["name"]): p for p in s.list_user_presets()}
+    assert listed[("process", "My strong")]["changes"]["sparse_infill_density"] == "25%"
+    assert listed[("printer", "My P1S")]["in_cloud"] is False
+    # only on this computer: renamed and deleted (with a backup)
+    s.rename_preset("process", "My strong", "My strong 2")
+    assert presets.exists("process", "My strong 2") and not presets.exists("process", "My strong")
+    s.delete_preset("printer", "My P1S")
+    assert not presets.exists("machine", "My P1S") and not list((studio_user / "studio").glob("user/123/machine/My P1S.*"))
+    # in the cloud: Bambu Studio would download it again, so it is refused; an edit is marked to be uploaded
+    path = presets.path_of("process", "My strong 2")
+    info = user_presets.read_info(path)
+    info["setting_id"] = "PPUS0123456789"
+    user_presets._write_info(path, info)
+    for call in (lambda: s.delete_preset("process", "My strong 2"),
+                 lambda: s.rename_preset("process", "My strong 2", "Other")):
+        with pytest.raises(ToolError, match="Bambu cloud"):
+            call()
+    assert presets.exists("process", "My strong 2")
+    s.edit_preset("process", "My strong 2", {"wall_loops": "3"})
+    assert user_presets.read_info(path)["sync_info"] == "update"
 
 
 def _cube_xml(oid, size):

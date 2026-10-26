@@ -52,7 +52,9 @@ flow ratio times (1 + percent / 100): black eSUN −5 % → 0.931.
 **Pressure advance tower.** Look at the four corners: bulging corners at the bottom (K too low), rounded corners
 or gaps after the corner at the top (K too high). Measure the height of the sharpest corners: K = height in mm ×
 step (0.004 by default). In the print dialog, untick *Flow Dynamics Calibration* for this test. Bambu printers take
-K from the printer, not from the preset: put it in Device > AMS > slot > *PA Profile / Factor K*.
+K from the printer, not from the preset: put it in Device > AMS > slot > *PA Profile / Factor K*. A K saved in
+the filament preset (`pressure_advance` with `enable_pressure_advance`) is kept in the file but not used: Bambu
+Studio writes no M900 for Bambu printers, and the server says so when you set it.
 
 **Max volumetric speed.** The last cylinder with clean walls; use about 90 % of it as
 `filament_max_volumetric_speed`.

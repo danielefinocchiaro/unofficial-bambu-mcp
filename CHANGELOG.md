@@ -41,6 +41,13 @@ Added
   painted colors, seams and supports stay on the pieces (manifold3d tells which original triangle each new one
   comes from; a triangle split by the cut takes the color covering most of it).
 - New projects use the build plate picked in Bambu Studio for that printer (`build_plate` in the summary).
+- `save_process_preset` / `save_printer_preset`: the project's process or printer changes as a Bambu Studio user
+  preset, a child of the project's preset like *Save as*; `replace=True` updates it, with a backup.
+- `edit_preset`, `list_user_presets`, `rename_preset`, `delete_preset`: your user presets without a project. Keys
+  and values are checked (kind of preset, number or not, one value per extruder variant), `null` goes back to the
+  parent's value, and every change keeps a backup (`UBMCP_PRESET_BACKUPS`). Changes are stamped in the `.info` file
+  so Bambu Studio uploads them to the Bambu cloud at its next start; presets that are in the cloud are not deleted
+  or renamed, because Bambu Studio would download them again, and the answer says how to do it in Bambu Studio.
 
 Fixed
 - Tool errors reach the assistant with their message (the MCP SDK hid everything but `ToolError`).
@@ -55,6 +62,10 @@ Fixed
 - AMS spools without RFID that were never set are `unknown`, not empty.
 - Calibration prints: larger, deeper numbers on the temperature tower and the flow squares.
 - `check_print_risks` no longer advises a brim to a part that already has one.
+- `save_filament_preset` dropped `pressure_advance` and `enable_pressure_advance` and answered "saved" with
+  nothing in it: Bambu profiles never write these keys, so they were not known as filament settings. They are now
+  set per slot (in projects with several filaments too) and saved; `replace=True` with no changes is an error and
+  leaves the file alone. Bambu printers ignore a preset's K (no M900 in the G-code): the answer says so.
 - `cut_object`: the upper piece lies on its cut face (with `flip_top`, the default, it was turned upside down onto
   its top). `flip_top` is replaced by `place` (auto, cut_down, keep).
 

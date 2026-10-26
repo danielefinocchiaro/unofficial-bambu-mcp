@@ -13,7 +13,7 @@ from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from . import arrange as arrange_mod
-from . import brim, calibration, cutting, geometry, paint, presets, preview, printer, slicer, studio, threemf
+from . import brim, calibration, cutting, geometry, paint, presets, preview, printer, slicer, studio, threemf, user_presets
 from .project import TOWER_BOX, LayerGcode, Obj, Part, Plate, Project, next_free_path
 
 INSTRUCTIONS = """Work on Bambu Studio projects (.3mf) for Bambu Lab printers. Typical flow:
@@ -500,6 +500,11 @@ def get_setting(key: str) -> dict:
     return {"key": key, "kind": kind, "value": cfg.get(key), "overridden": key in pr.overrides}
 
 
+PA_KEYS = ("pressure_advance", "enable_pressure_advance")
+PA_NOTE = ("Bambu Lab printers do not use the pressure advance of a filament preset (Bambu Studio writes no M900 "
+           "for them, checked on a sliced P1S file): they use the K of the AMS slot, from Flow Dynamics calibration. "
+           "To print with this K, set it on the printer: Device > AMS > slot > PA Profile / Factor K, and untick "
+           "Flow Dynamics Calibration when sending")
 PLATE_TEMP = {"Cool Plate": "cool_plate_temp", "Engineering Plate": "eng_plate_temp", "High Temp Plate": "hot_plate_temp",
               "Textured PEI Plate": "textured_plate_temp", "Supertack Plate": "supertack_plate_temp"}
 
@@ -531,6 +536,8 @@ def set_setting(key: str, value: str, slot: int = 0) -> dict:
     else:
         pr.overrides[key] = value
     res = {"key": key, "kind": kind, "value": pr.overrides[key], "previous": cur}
+    if key in PA_KEYS:
+        res["pressure_advance_note"] = PA_NOTE
     family = next((f for f in PLATE_TEMP.values() if key in (f, f + "_initial_layer")), None)
     bed = pr.config().get("curr_bed_type")
     if family and PLATE_TEMP.get(bed, family) != family:
@@ -1156,8 +1163,8 @@ def make_pa_tower(filament: int = 1, start: float = 0.0, end: float = 0.06, step
 
 @tool()
 def save_filament_preset(slot: int, name: str, replace: bool = False) -> dict:
-    """Save the filament of a slot, with this project's changes for that slot (temperatures, flow ratio, plate
-    temperatures...), as a Bambu Studio user preset; it appears after Bambu Studio restarts.
+    """Save the filament of a slot, with this project's changes for that slot (temperatures, flow ratio, pressure
+    advance, plate temperatures...), as a Bambu Studio user preset; it appears after Bambu Studio restarts.
     A new filament (made from a Generic preset, or with another filament_vendor) is saved like Bambu Studio's
     Create Filament does: its own filament id, so it can be picked for an AMS slot (Device > AMS). Changes to a
     Bambu filament are saved as a variant of it, so its RFID spools still match it.
@@ -1167,28 +1174,101 @@ def save_filament_preset(slot: int, name: str, replace: bool = False) -> dict:
     if not 1 <= slot <= len(pr.filaments):
         raise ValueError(f"slot must be 1..{len(pr.filaments)}")
     preset = pr.filaments[slot - 1][0]
-    values = {}
-    fkeys = set(presets.settings("filament", preset))
+    changes = {}
     for k, v in pr.overrides.items():
-        if k in fkeys:
-            values[k] = v[slot - 1] if isinstance(v, list) and len(v) >= slot else v
+        if pr.key_kind(k) == "filament":
+            changes[k] = v[slot - 1] if isinstance(v, list) and len(v) >= slot else v
+    if replace and not changes:
+        raise ValueError(f"slot {slot} has no changes to save, so '{name}' was not touched: "
+                         f"set_setting(key, value, slot={slot}) first")
+    values = dict(changes)
     base = presets.flat("filament", preset)
     own = presets.source("filament", preset) == "user"
     if own and not replace and presets.raw("filament", preset).get("inherits"):
         values = {**{k: (v[0] if isinstance(v, list) and v else v) for k, v in presets.raw("filament", preset).items()
                      if k not in presets.META and k != "filament_extruder_variant"}, **values}
-    if not values and not replace:
-        raise ValueError("this slot has no changes to save: use set_setting(..., slot=N) first")
+    if not values:
+        raise ValueError(f"slot {slot} has no changes to save: use set_setting(key, value, slot={slot}) first")
     vendor = (base.get("filament_vendor") or [""])[0]
     new_filament = vendor == "Generic" or values.get("filament_vendor", vendor) != vendor or (own and not base.get("inherits"))
-    path, saved, fid = presets.write_user_filament(name, preset, values, machine=pr.machine if new_filament else None,
-                                                   replace=replace)
-    res = {"saved": path, "name": saved, "values": values}
-    if fid:
-        res["filament_id"] = fid
-    res["note"] = ("restart Bambu Studio to see it" + ("; it is listed for AMS slots (Device > AMS) as "
-                   f"'{saved.split(' @')[0]}'" if new_filament or fid else "; it matches the spools of " + preset))
+    res = user_presets.write_filament(name, preset, values, machine=pr.machine if new_filament else None,
+                                      replace=replace)
+    saved = res["name"]
+    res["values"] = changes
+    line = presets.raw("filament", preset).get("inherits") or preset if own else preset
+    res["note"] = ("it is listed for AMS slots (Device > AMS) as " f"'{saved.split(' @')[0]}'"
+                   if new_filament or res.get("filament_id") else "it matches the spools of " + line)
+    if any(k in changes for k in PA_KEYS):
+        res["pressure_advance_note"] = PA_NOTE
     return res
+
+
+def _project_values(pr, kind):
+    values = {k: v for k, v in pr.overrides.items() if pr.key_kind(k) == kind}
+    if not values:
+        what = "wall_loops, sparse_infill_density, brim_type" if kind == "process" else "machine_start_gcode"
+        raise ValueError(f"this project has no {user_presets.SHOWN[kind]} changes to save: "
+                         f"use set_setting first (e.g. {what})")
+    return values
+
+
+@tool()
+def save_process_preset(name: str, replace: bool = False) -> dict:
+    """Save this project's process changes (layer height, walls, infill, speeds, brim, supports, ironing...:
+    the set_setting changes that belong to the process) as a Bambu Studio user process preset, a child of the
+    project's process preset, like Save as in Bambu Studio. replace=True updates your user preset with that name
+    (a backup copy is kept). It appears after Bambu Studio restarts."""
+    pr = P()
+    return user_presets.save("process", name, pr.process, _project_values(pr, "process"), replace)
+
+
+@tool()
+def save_printer_preset(name: str, replace: bool = False) -> dict:
+    """Save this project's printer changes (start/end G-code, retraction, printable area...: the set_setting
+    changes that belong to the printer) as a Bambu Studio user printer preset, a child of the project's printer
+    preset. replace=True updates your user preset with that name (a backup copy is kept). It appears after
+    Bambu Studio restarts."""
+    pr = P()
+    return user_presets.save("machine", name, pr.machine, _project_values(pr, "machine"), replace)
+
+
+@tool()
+def list_user_presets(kind: str = "") -> list:
+    """Your own Bambu Studio presets (kind: filament | process | printer; empty = all): the preset each one
+    inherits and what it changes, whether it is in your Bambu cloud (then only Bambu Studio can delete or
+    rename it), and which presets inherit it. To find system presets too, use search_presets."""
+    kinds = (user_presets.kind(kind),) if kind else ("filament", "process", "machine")
+    return user_presets.listing(kinds)
+
+
+@tool()
+def edit_preset(kind: str, name: str, values: dict) -> dict:
+    """Change settings of one of your user presets directly, without a project (a backup copy is kept).
+    kind: filament | process | printer. values: {"key": "value"}, e.g. {"pressure_advance": "0.025",
+    "enable_pressure_advance": "1"} or {"nozzle_temperature": "215"}; a list gives one value per extruder variant
+    (Standard / High Flow nozzle); null removes the key, so the value comes from the parent preset again.
+    Bambu system presets are read-only: save a user preset from them first. Bambu Studio sees the change after it
+    restarts, and uploads it to your Bambu cloud if the preset is there."""
+    res = user_presets.edit(user_presets.kind(kind), name, values)
+    if any(k in values for k in PA_KEYS):
+        res["pressure_advance_note"] = PA_NOTE
+    return res
+
+
+@tool()
+def rename_preset(kind: str, name: str, new_name: str) -> dict:
+    """Rename one of your user presets (a backup copy is kept). A preset in your Bambu cloud cannot be renamed
+    from here, because Bambu Studio would download the old one again: the answer says how to do it in Bambu
+    Studio."""
+    return user_presets.rename(user_presets.kind(kind), name, new_name)
+
+
+@tool()
+def delete_preset(kind: str, name: str) -> dict:
+    """Delete one of your user presets (a backup copy is kept, see the answer). A preset in your Bambu cloud
+    cannot be deleted from here, because Bambu Studio would download it again at its next start: only its own
+    Delete removes the cloud copy, and the answer says where it is."""
+    return user_presets.delete(user_presets.kind(kind), name)
 
 
 # ---------------------------------------------------------------- Bambu Studio sync

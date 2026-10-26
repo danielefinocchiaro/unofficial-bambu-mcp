@@ -3,10 +3,8 @@
 Objects keep their mesh in their own coordinates; `at` is where the center of their footprint sits on
 the plate (mm from the plate origin). When written, every object is dropped onto the bed.
 """
-import json
 import math
 import os
-from importlib import resources
 
 import numpy as np
 
@@ -273,6 +271,7 @@ class Project:
                 [presets.settings("filament", n) for n, _ in self.filaments])
 
     def key_kind(self, key):
+        """'filament', 'process', 'machine', 'project' or None: this project's presets first, then any preset."""
         m, p, fl = self.preset_settings()
         if any(key in f for f in fl):
             return "filament"
@@ -280,14 +279,14 @@ class Project:
             return "process"
         if key in m:
             return "machine"
-        return None
+        return presets.kind_of(key)
 
     def config(self):
         """Full project_settings.config: template + machine + process + per-slot filament values + overrides."""
-        with resources.files("unofficial_bambu_mcp").joinpath("data/bambu_template.config").open(encoding="utf-8") as f:
-            cfg = json.load(f)
+        cfg = presets.template()
         m, p, fl = self.preset_settings()
         fkeys = set().union(*[set(f) for f in fl]) if fl else set()
+        fkeys |= {k for k in presets.UNLISTED["filament"] if isinstance(cfg.get(k), list)}    # one value per slot too
         for k, v in {**m, **p}.items():
             if k not in fkeys:
                 cfg[k] = v

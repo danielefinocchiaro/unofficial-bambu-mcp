@@ -39,6 +39,7 @@ are written for the demo ([scripts/make_demo.py](scripts/make_demo.py)).</sub>
 | Cutting | `cut_object` on any plane, with **connectors** like Bambu Studio's Cut tool: a **plug** (peg and hole with clearance), **dowels** (holes in both pieces and separate pins) or a **dovetail**; round, square or hexagonal, straight or tapered, placed automatically or where you say, made shallower where a piece is thin. The pieces are laid out to print: the peg always points up. |
 | Modifiers | Box or **round** parts: modifiers with their own settings ("the top 5 mm at 100 % infill"), negative parts (holes for magnets and screws), support blockers and enforcers. |
 | Settings | Read or change any Bambu Studio setting, per filament slot when it applies, with a warning when a value cannot apply (e.g. a textured-plate temperature on a smooth plate). |
+| Presets | Save the project's changes as Bambu Studio **user presets**: filament (`save_filament_preset`), **process** and **printer**; or change one of your presets directly (`edit_preset`), list, rename and delete them, with a backup copy each time. Values are checked and written the way Bambu Studio does (one per nozzle variant where it applies), and changes are stamped for Bambu Studio's cloud sync. Presets that are in your Bambu cloud can only be deleted from Bambu Studio: the answer says how. |
 | Purge volumes | `get_purge_volumes` / `set_purge_volumes`: the purge between each pair of slots and the multiplier, as in Bambu Studio's dialog; the values in opened files are kept. |
 | Slicing | Bambu Studio command line: time, grams per filament, filament changes, pauses, layers and warnings per plate. Empty plates are skipped. |
 | Previews | Images of a plate (iso or top, zoom, painted colors, **object labels**) and of any **sliced layer**, so the assistant checks its own work. |
@@ -50,7 +51,7 @@ are written for the demo ([scripts/make_demo.py](scripts/make_demo.py)).</sub>
 | Printing | `send_to_printer` makes the print file of a plate and opens it in **Bambu Studio** (or **Bambu Connect**) ready to print: you check the AMS mapping and press Print. |
 | Printer status | `printer_status` (read only, local network): state, progress, temperatures, AMS trays with humidity, skipped objects, and warnings (unknown spool being fed, sport speed on a long print). |
 
-All 54 tools with their parameters: [docs/TOOLS.md](docs/TOOLS.md).
+All 60 tools with their parameters: [docs/TOOLS.md](docs/TOOLS.md).
 
 ## Tested on real hardware
 
@@ -115,6 +116,7 @@ Then ask: *"What version of Bambu Studio do I have, and which printers can you u
 | `UBMCP_DIR` | `~/Documents/unofficial-bambu-mcp` | Where projects, sliced files and print files are saved |
 | `BAMBU_STUDIO_EXE` | auto-detected | Path of the Bambu Studio executable |
 | `BAMBU_STUDIO_DATA` | auto-detected | Bambu Studio data folder (with `system/` and `user/`) |
+| `UBMCP_PRESET_BACKUPS` | `~/.config/unofficial-bambu-mcp/preset-backups` | Where a copy of a user preset goes before it is changed, renamed or deleted |
 | `BAMBU_PRINTER_SERIAL`, `BAMBU_PRINTER_ACCESS_CODE`, `BAMBU_PRINTER_IP` | from Bambu Studio | Printer for `printer_status`, if you do not want it read from Bambu Studio |
 
 ## How it works
@@ -126,7 +128,7 @@ flattened the way the app does. Details in [docs/how-it-works.md](docs/how-it-wo
 - **In sync with the app.** `open_in_bambu_studio` shows a project in the app; if you change it there and save,
   the server re-reads it on the next command (and tells you if both sides changed).
 - **Safe with your files.** Nothing is ever overwritten: saving adds `-2`, `-3`... and opened files are read as a
-  copy. Updating one of your filament presets keeps a backup copy first.
+  copy. Changing, renaming or deleting one of your presets keeps a backup copy first.
 - **Light.** numpy, shapely, manifold3d, fonttools and Pillow. No Bambu profile is shipped with this repository:
   presets come from your installation (the server only carries default values for settings that presets leave out).
 - **Your printer, your call.** The LAN access code is read from Bambu Studio when needed and never copied
