@@ -219,8 +219,42 @@ def _read_packet(sock):
     return h[0] >> 4, data
 
 
+FOLLOW_S = 4.5        # after the full report, wait this long for a newer partial one (P1: about every 2-4 s)
+
+
+def _seq(pr):
+    try:
+        return int(pr.get("sequence_id"))
+    except (TypeError, ValueError):
+        return -1
+
+
+def _is_full(pr):
+    return pr.get("command") == "push_status" and ("ams" in pr or "gcode_state" in pr) and len(pr) > 20
+
+
+def merge(msgs):
+    """One report from the status messages received, in arrival order: the full report (the answer to pushall),
+    then the partial ones newer than it by sequence number (P1 printers send only what changed). Without a full
+    report, every message in order. '_updates' = partial reports newer than the full one."""
+    full = next((m for m in msgs if _is_full(m)), None)
+    if full is None:
+        out = {}
+        for m in msgs:
+            out.update(m)
+        out["_updates"] = len(msgs)
+        return out
+    out, base = dict(full), _seq(full)
+    newer = sorted((m for m in msgs if m is not full and _seq(m) > base), key=_seq)
+    for m in newer:
+        out.update(m)
+    out["_full_seq"], out["_updates"] = base, len(newer)
+    return out
+
+
 def fetch_report(ip, serial, code, timeout=12.0):
-    """Ask the printer for its full status once ('pushall') and return the merged JSON report."""
+    """Ask the printer for its full status once ('pushall'), wait for the first change sent after it, and return
+    the merged JSON report ('_received' = when, epoch seconds)."""
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE              # the printer uses a self-signed certificate
@@ -241,8 +275,12 @@ def fetch_report(ip, serial, code, timeout=12.0):
         req = json.dumps({"pushing": {"sequence_id": "0", "command": "pushall", "version": 1, "push_target": 1}})
         pub = _str(f"device/{serial}/request") + req.encode()
         sock.sendall(bytes([0x30]) + _remaining_length(len(pub)) + pub)
-        merged, end = {}, time.time() + timeout
-        while time.time() < end:
+        msgs, full, end = [], None, time.time() + timeout
+        while True:
+            left = end - time.time()
+            if left <= 0:
+                break
+            sock.settimeout(left)
             try:
                 kind, data = _read_packet(sock)
             except socket.timeout:
@@ -256,13 +294,19 @@ def fetch_report(ip, serial, code, timeout=12.0):
             except ValueError:
                 continue
             pr = msg.get("print")
-            if isinstance(pr, dict):
-                merged.update(pr)
-                if pr.get("command") == "push_status" and ("ams" in pr or "gcode_state" in pr) and len(pr) > 20:
-                    break
+            if not isinstance(pr, dict):
+                continue
+            msgs.append(pr)
+            if full is None and _is_full(pr):
+                full = pr
+                end = min(end, time.time() + FOLLOW_S)
+            elif full is not None and _seq(pr) > _seq(full):
+                break                                 # a change newer than the full report: the report is current
         sock.sendall(b"\xe0\x00")                # DISCONNECT
-        if not merged:
+        if not msgs:
             raise PrinterError("no status received from the printer")
+        merged = merge(msgs)
+        merged["_received"] = time.time()
         return merged
     finally:
         sock.close()
@@ -295,6 +339,23 @@ def _line(filament_id):
         return presets.line_for_filament_id(filament_id) if filament_id else None
     except (OSError, ValueError):
         return None
+
+
+def staleness(rep, prev=None):
+    """Why a report may be old, or []: no change came after the full report although the nozzle is far from its
+    target (heating or cooling sends one every few seconds), or the printer sent the same report as last time."""
+    out = []
+    t, target = rep.get("nozzle_temper"), rep.get("nozzle_target_temper")
+    moving = isinstance(t, (int, float)) and isinstance(target, (int, float)) and t > 45 and abs(target - t) > 5
+    if moving and rep.get("_full_seq") is not None and not rep.get("_updates"):
+        out.append(f"the printer sent no change for {FOLLOW_S:g} s although its nozzle is at {t:.0f} °C with "
+                   f"target {target:.0f} °C: this report may be old; the printer screen or Bambu Handy show the "
+                   "live state")
+    if prev is not None and rep.get("_full_seq") is not None and rep.get("_full_seq") == prev.get("_full_seq"):
+        ago = rep.get("_received", 0) - prev.get("_received", 0)
+        out.append(f"the printer sent the same report as {ago:.0f} s ago (same sequence number): it may be stuck "
+                   "on an old state")
+    return out
 
 
 def summarize(r):
@@ -365,6 +426,11 @@ def summarize(r):
         out["active_slot"] = "external spool" if now == "254" else int(now) + 1
     if r.get("s_obj"):
         out["skipped_objects"] = [int(x) for x in r["s_obj"] if str(x).lstrip("-").isdigit()]
+    if r.get("_received"):
+        out["read_at"] = time.strftime("%H:%M:%S", time.localtime(r["_received"]))
+        age = time.time() - r["_received"]
+        if age >= 1:
+            out["age_s"] = round(age)                  # a reading kept from a call a few seconds ago
     return out
 
 
@@ -374,6 +440,9 @@ def advice(s, expected=()):
     if s.get("state") not in ("printing", "paused", "preparing"):
         return []
     out = []
+    if s.get("state") == "printing" and (s.get("nozzle_c") or [0, 0])[1] == 0 and (s.get("bed_c") or [0, 0])[1] == 0:
+        out.append("the printer says printing but the nozzle and bed heaters are off: the job is starting or "
+                   "stopping, or this report is old; ask again in a minute or look at the printer screen")
     act = s.get("active_slot")
     tray = next((t for t in s.get("ams_trays", []) if t["slot"] == act), None) if isinstance(act, int) else None
     ids = {fid for _, _, fid in expected if fid}
@@ -415,11 +484,15 @@ class Status:
 
 
 def status(serial=None, max_age=20.0):
+    """(report, serial). A report younger than max_age seconds is given again ('_received' says how old it is);
+    '_stale' lists the signs that the printer itself sent an old state."""
     s, code = credentials(serial)
     with Status.lock:
         if Status.last and Status.last[0] == s and time.time() - Status.at < max_age:
             return Status.last[1], s
         ip = address(s)
         rep = fetch_report(ip, s, code)
+        prev = Status.last[1] if Status.last and Status.last[0] == s else None
+        rep["_stale"] = staleness(rep, prev)
         Status.last, Status.at = (s, rep), time.time()
         return rep, s

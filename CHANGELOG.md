@@ -69,6 +69,10 @@ Fixed
 - User presets saved, renamed or deleted in Bambu Studio while the server runs are seen at the next call (the
   list of presets was read once): `list_user_presets` failed on a deleted file, and a project whose preset was
   deleted now says which slot to change.
+- `printer_status` kept the first full report and gave it again for 20 s without saying so: it now waits for the
+  first change sent after it (P1 printers send only what changed, every 2-4 s), merges by sequence number, says
+  when the reading was taken (`read_at`, `age_s`), and warns when a report looks old (no change while the nozzle
+  heats or cools, the same report twice) or says "printing" with the heaters off.
 - `cut_object`: the upper piece lies on its cut face (with `flip_top`, the default, it was turned upside down onto
   its top). `flip_top` is replaced by `place` (auto, cut_down, keep).
 

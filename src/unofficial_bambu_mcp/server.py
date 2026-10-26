@@ -964,7 +964,9 @@ def printer_status() -> dict:
     """Read-only status of the printer on the local network: state, job, progress, remaining time, layer
     (or the last job's result when idle), temperatures, AMS trays (type, color, remaining %; 'unknown' = a spool
     the AMS has not been told about), AMS humidity and temperature, active slot, errors, objects skipped during the
-    print, and warnings (the spool being fed is unknown or not the project's filament, sport speed on a long print).
+    print, and warnings (the spool being fed is unknown or not the project's filament, sport speed on a long print,
+    a report that looks old). read_at = when the printer sent it; age_s = seconds since, when a reading of a few
+    seconds ago is given again (the printer is asked at most every 20 s).
     Works with the printer in normal cloud mode (Bambu Handy keeps working). Nothing is sent to the printer except a
     status request."""
     rep, serial = printer.status()
@@ -978,7 +980,7 @@ def printer_status() -> dict:
                 expected.append((i, preset, presets.flat("filament", preset).get("filament_id")))
             except presets.PresetError:
                 pass
-    warnings = printer.advice(out, expected)
+    warnings = rep.get("_stale", []) + printer.advice(out, expected)
     if out.get("skipped_objects"):
         names = threemf.object_names(S.exported[job]) if job in S.exported else {}
         out["skipped_objects"] = [{"id": i, **({"name": names[i]} if i in names else {})}

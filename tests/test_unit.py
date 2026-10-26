@@ -643,6 +643,42 @@ def test_printer_advice_and_skipped_objects(tmp_path):
     assert threemf.object_names(str(p)) == {648: "pin_short x2 b"}
 
 
+def test_printer_reports_merged_by_sequence_and_old_ones_flagged():
+    """P1 printers answer pushall with a full report, then send only what changed every 2-4 s."""
+    import time
+
+    from unofficial_bambu_mcp import printer
+
+    def full(seq, nozzle, state="RUNNING"):
+        rep = {f"k{i}": i for i in range(20)}
+        rep.update({"command": "push_status", "sequence_id": str(seq), "gcode_state": state, "nozzle_temper": nozzle,
+                    "nozzle_target_temper": 0, "bed_temper": 61.8, "bed_target_temper": 0, "layer_num": 0,
+                    "total_layer_num": 12, "subtask_name": "old job"})
+        return rep
+
+    def part(seq, nozzle):
+        return {"command": "push_status", "msg": 1, "sequence_id": str(seq), "nozzle_temper": nozzle}
+
+    # changes newer than the full report win; older ones (sent before it) do not
+    m = printer.merge([part(40, 150.0), full(41, 106.1), part(42, 108.5), part(43, 111.0)])
+    assert m["nozzle_temper"] == 111.0 and m["_updates"] == 2 and m["_full_seq"] == 41
+    # an old full report (lower number than changes already received): the changes still win
+    m = printer.merge([part(60, 176.4), full(41, 106.1)])
+    assert m["nozzle_temper"] == 176.4 and m["gcode_state"] == "RUNNING"
+    assert printer.merge([part(5, 30.0), part(6, 31.0)])["nozzle_temper"] == 31.0
+    # no change after the full report while the nozzle should be cooling, or the very same report again: old
+    old = printer.merge([full(41, 106.1)])
+    old["_received"] = time.time() - 60
+    assert any("may be old" in w for w in printer.staleness(old))
+    again = dict(old, _received=time.time())
+    assert any("same report" in w for w in printer.staleness(again, old))
+    assert printer.staleness(printer.merge([full(41, 106.1), part(42, 105.0)])) == []
+    assert printer.staleness(printer.merge([full(41, 24.0)])) == []          # cold and idle: nothing changes
+    s = printer.summarize(old)
+    assert s["age_s"] >= 59 and len(s["read_at"]) == 8
+    assert any("heaters are off" in w for w in printer.advice(s))
+
+
 @needs_bambu
 def test_check_print_risks(tmp_path, monkeypatch):
     monkeypatch.setenv("UBMCP_DIR", str(tmp_path))
