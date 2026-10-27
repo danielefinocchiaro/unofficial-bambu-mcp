@@ -1,0 +1,57 @@
+# The whole test suite with Bambu Studio installed: slicing, presets, print files, on Windows and Linux.
+# Bambu Studio is downloaded from its GitHub release (the portable zip on Windows, the AppImage on Linux).
+name: with-bambu-studio
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, features]
+env:
+  STUDIO_TAG: v02.08.02.61
+  STUDIO_BUILD: "20260820225108"
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Bambu Studio (portable zip)
+        shell: pwsh
+        run: |
+          $v = "${env:STUDIO_TAG}".TrimStart("v")
+          $url = "https://github.com/bambulab/BambuStudio/releases/download/${env:STUDIO_TAG}/Bambu_Studio_win-${env:STUDIO_TAG}-${env:STUDIO_BUILD}.zip"
+          Invoke-WebRequest $url -OutFile studio.zip
+          Expand-Archive studio.zip -DestinationPath "$env:RUNNER_TEMP\studio"
+          $exe = Get-ChildItem "$env:RUNNER_TEMP\studio" -Recurse -Filter bambu-studio.exe | Select-Object -First 1
+          "BAMBU_STUDIO_EXE=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "BAMBU_STUDIO_DATA=$env:RUNNER_TEMP\studio-data" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - run: uv sync
+      - run: uv run python -c "from unofficial_bambu_mcp import studio; print(studio.executable(), studio.resources_dir(), studio.profile_roots())"
+      - run: uv run pytest -q
+      - run: uv run python tests/smoke.py
+        env:
+          UBMCP_DIR: ${{ runner.temp }}/out
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Bambu Studio (AppImage, extracted)
+        run: |
+          url="https://github.com/bambulab/BambuStudio/releases/download/${STUDIO_TAG}/BambuStudio_ubuntu24.04-${STUDIO_TAG}-${STUDIO_BUILD}.AppImage"
+          curl -sL -o studio.AppImage "$url" && chmod +x studio.AppImage
+          ./studio.AppImage --appimage-extract > /dev/null
+          sudo apt-get update -qq && sudo apt-get install -y -qq xvfb libegl1 libgl1 libgtk-3-0t64 libwebkit2gtk-4.1-0 > /dev/null || true
+          exe=$(find "$PWD/squashfs-root" -name bambu-studio -type f | head -1)
+          echo "BAMBU_STUDIO_EXE=$exe" >> "$GITHUB_ENV"
+          echo "BAMBU_STUDIO_DATA=$RUNNER_TEMP/studio-data" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$PWD/squashfs-root/lib:$PWD/squashfs-root/usr/lib" >> "$GITHUB_ENV"
+      - run: uv sync
+      - run: uv run python -c "from unofficial_bambu_mcp import studio; print(studio.executable(), studio.resources_dir(), studio.profile_roots())"
+      - run: xvfb-run -a uv run pytest -q
+      - run: xvfb-run -a uv run python tests/smoke.py
+        env:
+          UBMCP_DIR: ${{ runner.temp }}/out

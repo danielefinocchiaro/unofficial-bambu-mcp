@@ -121,6 +121,7 @@ Then ask: *"What version of Bambu Studio do I have, and which printers can you u
 | `UBMCP_DIR` | `~/Documents/unofficial-bambu-mcp` | Where projects, sliced files and print files are saved |
 | `BAMBU_STUDIO_EXE` | auto-detected | Path of the Bambu Studio executable |
 | `BAMBU_STUDIO_DATA` | auto-detected | Bambu Studio data folder (with `system/` and `user/`) |
+| `BAMBU_STUDIO_RESOURCES` | auto-detected | Bambu Studio resources folder (with `profiles/`), for unusual Linux installs |
 | `UBMCP_PRESET_BACKUPS` | `~/.config/unofficial-bambu-mcp/preset-backups` | Where a copy of a user preset goes before it is changed, renamed or deleted |
 | `BAMBU_PRINTER_SERIAL`, `BAMBU_PRINTER_ACCESS_CODE`, `BAMBU_PRINTER_IP` | from Bambu Studio | Printer for `printer_status`, if you do not want it read from Bambu Studio |
 

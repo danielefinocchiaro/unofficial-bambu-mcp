@@ -1,8 +1,9 @@
 """Where Bambu Studio lives on this machine: executable, profiles, user presets.
 
 Everything can be overridden with environment variables:
-  BAMBU_STUDIO_EXE   path to the Bambu Studio executable
-  BAMBU_STUDIO_DATA  Bambu Studio data folder (the one with system/ and user/)
+  BAMBU_STUDIO_EXE        path to the Bambu Studio executable
+  BAMBU_STUDIO_DATA       Bambu Studio data folder (the one with system/ and user/)
+  BAMBU_STUDIO_RESOURCES  Bambu Studio resources folder (the one with profiles/), if not next to the program
 """
 import glob
 import json
@@ -73,13 +74,22 @@ def preferred_bed_type(machine):
 
 
 def resources_dir():
+    """Bambu Studio's resources folder (with profiles/BBL): next to the program on Windows, in the app bundle on macOS,
+    in an extracted AppImage or a system install on Linux. BAMBU_STUDIO_RESOURCES overrides it."""
+    env = os.environ.get("BAMBU_STUDIO_RESOURCES")
+    if env:
+        return env
     exe = executable()
     if not exe:
         return None
+    here = os.path.dirname(os.path.realpath(exe))
     if SYSTEM == "Darwin":
-        return os.path.normpath(os.path.join(os.path.dirname(exe), "..", "Resources"))
-    if SYSTEM == "Windows":
-        return os.path.join(os.path.dirname(exe), "resources")
+        return os.path.normpath(os.path.join(here, "..", "Resources"))
+    for c in (os.path.join(here, "resources"), os.path.join(here, "..", "resources"),
+              os.path.join(here, "..", "share", "BambuStudio", "resources"), "/usr/share/BambuStudio/resources",
+              "/app/share/BambuStudio/resources"):
+        if os.path.isdir(os.path.join(c, "profiles")):
+            return os.path.normpath(c)
     return None
 
 
