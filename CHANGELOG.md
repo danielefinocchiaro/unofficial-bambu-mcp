@@ -41,6 +41,15 @@ Added
   painted colors, seams and supports stay on the pieces (manifold3d tells which original triangle each new one
   comes from; a triangle split by the cut takes the color covering most of it).
 - New projects use the build plate picked in Bambu Studio for that printer (`build_plate` in the summary).
+- `orient_object`: auto orientation, scored on the area that needs support, the area on the bed and the height
+  (candidates: the big flat faces of the hull and directions spread over the sphere); the 3 best options are
+  listed and can be picked. A painted gnome tipped by 70° comes back upright.
+- `fill_plate`: fill the plate with copies, by the real outline on `arrange`'s grid (61 discs of 25 mm on a P1S).
+- `split_object` (into objects or parts), `merge_objects`, `boolean_objects` (difference, union, intersection),
+  with painted triangles kept; a warning when the two objects do not touch.
+- `make_vfa_test`: blocks with their own outer wall speed (40-200 mm/s), the speed engraved on top, and a note when
+  the filament's max volumetric speed caps them.
+- `slice_project` gives the cost per plate and per filament, from the presets' price per kg.
 - `save_process_preset` / `save_printer_preset`: the project's process or printer changes as a Bambu Studio user
   preset, a child of the project's preset like *Save as*; `replace=True` updates it, with a backup.
 - `edit_preset`, `list_user_presets`, `rename_preset`, `delete_preset`: your user presets without a project. Keys

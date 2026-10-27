@@ -3,6 +3,8 @@
 - Temperature tower: blocks with a bridge and the temperature engraved, one temperature per block (M104).
 - Flow rate test: squares printed with a per-object flow ratio, the percentage engraved on top.
 - Pressure advance tower: a thin square tube, the K value changes every millimeter (M900, as Bambu's own tower).
+- VFA test (vertical fine artifacts): blocks printed with a different outer wall speed each, the speed engraved on
+  top; Bambu Studio's VFA tower changes the speed inside one object, which its command line cannot do.
 """
 import math
 
@@ -109,6 +111,21 @@ def pa_tower(values, layer_h=0.2, first_h=0.2, filament=1, step_h=1.0, size=40.0
         z = snap(max(first_h, i * step_h + layer_h if i else first_h), layer_h, first_h)
         actions.append(LayerGcode(z, "custom", gcode=f"M900 K{k:.4f} ; pressure advance tower step {i + 1}"))
     return ob, actions
+
+
+# ---------------------------------------------------------------- vertical fine artifacts
+def vfa_blocks(speeds, filament=1, w=30.0, d=14.0, h=20.0):
+    """One block per outer wall speed (mm/s), the speed engraved on top: [Obj], laid out later by the caller.
+    The long faces show the fine vertical ripples some speeds cause (motor resonance)."""
+    out = []
+    for v in speeds:
+        blk = _box(-w / 2, -d / 2, 0, w / 2, d / 2, h)
+        blk = _engrave_top(blk, f"{v:g}", 0.0, 0.0, h, cap=5.0, depth=0.8, spacing=0.4)
+        vv, t = _mesh(blk)
+        name = f"VFA {v:g} mm/s"
+        out.append(Obj(name, [Part(name, vv, t, filament)],
+                       settings={"outer_wall_speed": f"{v:g}", "wall_loops": "2", "sparse_infill_density": "10%"}))
+    return out
 
 
 def frange(a, b, step):

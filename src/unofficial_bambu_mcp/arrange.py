@@ -242,6 +242,57 @@ def check(placed, bed_size, gap, exclude=None):
 TOWER_MARGIN = 4.0
 
 
+def plate_bed(pr, cfg, t, moving, gap, exclude, tower, one_material=False):
+    """The grid of plate t (0-based) with its objects that are not in `moving` (ids) as obstacles."""
+    bw, bd = pr.info["bed"]
+    others = [o for o in (pr.plates[t].objects if t < len(pr.plates) else []) if id(o) not in moving]
+    fixed = [affinity.translate(footprint(o, cfg), o.at[0], o.at[1]) for o in others]
+    b = Bed((bw, bd), exclude, fixed, gap, tower)
+    b.filaments = {f for o in others for f in o.filaments()}
+    if len(b.filaments) > 1:                         # already several materials: keep the tower's corner
+        b._paint(b.fixed, tower, gap / 2)
+        b.tower_on = True
+    if one_material and others:
+        b.group = tuple(sorted(b.filaments))
+    return b
+
+
+def _areas(pr, avoid_calibration_area, tower_box):
+    bw, bd = pr.info["bed"]
+    exclude = Polygon(pr.info["exclude"]) if avoid_calibration_area and pr.info["exclude"] else None
+    tower = box(bw - TOWER_MARGIN - tower_box, bd - TOWER_MARGIN - tower_box, bw - TOWER_MARGIN, bd - TOWER_MARGIN)
+    return exclude, tower
+
+
+def fill(pr, cfg, obj, plate, count=0, gap=6.0, rotate=False, rotation_step=90.0, keep_place=False,
+         avoid_calibration_area=True, tower_box=60.0):
+    """Places for copies of obj on plate (0-based), as many as fit or at most `count`, with Bambu Studio's
+    Fill bed with copies in mind. The original is placed again with them (lowest free place first, then the group
+    is centered) unless keep_place. Returns (original's (x, y, angle) or None, [(x, y, angle)] for the copies)."""
+    exclude, tower = _areas(pr, avoid_calibration_area, tower_box)
+    bed = plate_bed(pr, cfg, plate, set() if keep_place else {id(obj)}, gap, exclude, tower)
+    shape, fils = footprint(obj, cfg), tuple(sorted(obj.filaments()))
+    want = (count if count > 0 else 10_000) + (0 if keep_place else 1)
+    rotations = angles(rotate, rotation_step)
+    placed = []
+    while len(placed) < want:
+        best = None
+        for a in rotations:
+            s = affinity.rotate(shape, a, origin=(0, 0)) if a else shape
+            spot = bed.try_place(s, fils)
+            if spot and (best is None or (spot["top"], spot["j"]) < (best[0]["top"], best[0]["j"])):
+                best = (spot, a)
+        if best is None:
+            break
+        bed.commit(best[0], len(placed), fils)
+        placed.append(best[1])
+    if not keep_place and not placed:
+        raise ValueError(f"'{obj.name}' does not fit on its plate with a {gap:g} mm gap")
+    bed.center()
+    spots = [(x, y, placed[k]) for k, x, y in bed.items]
+    return (None, spots) if keep_place else (spots[0], spots[1:])
+
+
 def run(pr, cfg, plate=0, objects=None, plates=0, gap=6.0, rotate=False, rotation_step=90.0,
         multi_material=True, avoid_calibration_area=True, align_to_y=False, tower_box=60.0):
     """Arrange a project's objects (all, one plate's, or the named ones) and apply it only if everything fits.
@@ -266,23 +317,13 @@ def run(pr, cfg, plate=0, objects=None, plates=0, gap=6.0, rotate=False, rotatio
     if plates < -1:
         raise ValueError("plates: 0 = keep each object on its plate, N = use N plates, -1 = as few as possible")
     bw, bd = pr.info["bed"]
-    exclude = Polygon(pr.info["exclude"]) if avoid_calibration_area and pr.info["exclude"] else None
-    tower = box(bw - TOWER_MARGIN - tower_box, bd - TOWER_MARGIN - tower_box, bw - TOWER_MARGIN, bd - TOWER_MARGIN)
+    exclude, tower = _areas(pr, avoid_calibration_area, tower_box)
     moving = {id(o) for _, o in items}
     shapes = {id(o): footprint(o, cfg) for _, o in items}
 
     def bed_for(t):
         """The grid of plate t (0-based), with the objects that are not being arranged as obstacles."""
-        others = [o for o in (pr.plates[t].objects if t < len(pr.plates) else []) if id(o) not in moving]
-        fixed = [affinity.translate(footprint(o, cfg), o.at[0], o.at[1]) for o in others]
-        b = Bed((bw, bd), exclude, fixed, gap, tower)
-        b.filaments = {f for o in others for f in o.filaments()}
-        if len(b.filaments) > 1:                     # already several materials: keep the tower's corner
-            b._paint(b.fixed, tower, gap / 2)
-            b.tower_on = True
-        if not multi_material and others:
-            b.group = tuple(sorted(b.filaments))
-        return b
+        return plate_bed(pr, cfg, t, moving, gap, exclude, tower, one_material=not multi_material)
 
     rotations = angles(rotate, rotation_step)
     packed = []

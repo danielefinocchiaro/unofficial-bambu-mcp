@@ -1,6 +1,6 @@
 # Tools
 
-60 tools, generated from the server code by `scripts/gen_tools_doc.py`.
+66 tools, generated from the server code by `scripts/gen_tools_doc.py`.
 
 ## `bambu_status`
 
@@ -185,6 +185,22 @@ Copy an object `copies` times onto free spots (same plate unless `plate` is give
 | `copies` | integer | `1` |
 | `plate` | integer | `0` |
 
+## `fill_plate`
+
+Fill the free area of an object's plate with copies of it, like Bambu Studio's Fill bed with copies.
+copies: 0 = as many as fit, N = at most N. Shapes nest by their real outline (brim and brim ears counted), and
+rotate=True also tries turning them by rotation_step degrees. The original is placed again together with the
+copies (more fit), unless keep_original=True; the other objects on the plate stay where they are.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `object` | string | required |
+| `copies` | integer | `0` |
+| `gap` | number | `6.0` |
+| `rotate` | boolean | `False` |
+| `rotation_step` | number | `90.0` |
+| `keep_original` | boolean | `False` |
+
 ## `delete_object`
 
 Remove an object from the project.
@@ -323,7 +339,7 @@ a plate sliced and ready to print, use send_to_printer(via='bambu_studio').
 ## `slice_project`
 
 Slice with Bambu Studio (plate 0 = all). Returns per plate: minutes, grams (total and per filament slot),
-filament changes, layers and warnings. The sliced project is saved next to the project file.
+cost (from the presets' price per kg), filament changes, layers and warnings. The sliced project is saved next to the project file.
 
 | Parameter | Type | Default |
 |---|---|---|
@@ -492,6 +508,20 @@ When sending it, turn off the printer's automatic flow dynamics calibration.
 | `end` | number | `0.06` |
 | `step` | number | `0.004` |
 
+## `make_vfa_test`
+
+Add a plate with a VFA test (vertical fine artifacts: fine vertical ripples on walls that some speeds cause):
+one block per outer wall speed from start to end mm/s, the speed engraved on top. Look at the long faces with
+light from the side and pick the fastest speed without ripples for outer_wall_speed. Bambu Studio's VFA tower
+changes the speed inside one object; here each block has its own speed.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `filament` | integer | `1` |
+| `start` | number | `40` |
+| `end` | number | `200` |
+| `step` | number | `20` |
+
 ## `save_filament_preset`
 
 Save the filament of a slot, with this project's changes for that slot (temperatures, flow ratio, pressure
@@ -608,6 +638,59 @@ Rotate an object so one of its flat faces lies on the bed: face 1 = the biggest 
 |---|---|---|
 | `object` | string | required |
 | `face` | integer | `1` |
+
+## `orient_object`
+
+Turn an object the way up it prints best, like Bambu Studio's Auto orientation: least area that needs support
+(faces leaning more than overhang_angle degrees from vertical, not on the bed), enough area on the bed, low
+height. Returns the 3 best options with those numbers and the current ones; choice=2 or 3 applies another
+option, apply=False only compares. Look at preview_plate afterwards.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `object` | string | required |
+| `choice` | integer | `1` |
+| `overhang_angle` | number | `45.0` |
+| `apply` | boolean | `True` |
+
+## `split_object`
+
+Split an object into its separate pieces, like Bambu Studio's Split: into='objects' makes one object per
+piece (each part of a multi-part object becomes an object too), into='parts' keeps one object whose parts are
+the pieces, so each can get its own filament. Pieces stay where they are; painted colors are kept, modifiers
+and negative parts go with the piece they overlap.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `object` | string | required |
+| `into` | string | `'objects'` |
+
+## `merge_objects`
+
+Join objects of the same plate into one object with several parts, where they are now, like Bambu Studio's
+Assemble: they move and print as one (e.g. a model and its base in another color). Each part keeps its filament
+and painting; the merged object takes the first object's settings (the others' are listed if they differ).
+
+| Parameter | Type | Default |
+|---|---|---|
+| `objects` | array | required |
+| `name` | string | `''` |
+
+## `boolean_objects`
+
+Mesh boolean between two objects where they are on the plate, like Bambu Studio's Mesh boolean.
+difference: cut tool_object's shape out of object (a hole, a slot, a lettering); intersection: keep only what
+they share; union: weld tool_object onto object (onto its part `part`, default the biggest). The result keeps
+object's name, settings and filaments; painted colors stay, new faces take the part's filament. The tool object
+is removed unless keep_tool=True. Both must be closed solids (check_object).
+
+| Parameter | Type | Default |
+|---|---|---|
+| `object` | string | required |
+| `tool_object` | string | required |
+| `operation` | string | `'difference'` |
+| `keep_tool` | boolean | `False` |
+| `part` | string | `''` |
 
 ## `cut_object`
 

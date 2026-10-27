@@ -13,7 +13,7 @@ from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from . import arrange as arrange_mod
-from . import brim, calibration, cutting, geometry, paint, presets, preview, printer, slicer, studio, threemf, user_presets
+from . import brim, calibration, cutting, geometry, meshops, orient, paint, presets, preview, printer, slicer, studio, threemf, user_presets
 from .project import TOWER_BOX, LayerGcode, Obj, Part, Plate, Project, next_free_path
 
 INSTRUCTIONS = """Work on Bambu Studio projects (.3mf) for Bambu Lab printers. Typical flow:
@@ -420,6 +420,53 @@ def duplicate_object(object: str, copies: int = 1, plate: int = 0) -> list:
 
 
 @tool()
+def fill_plate(object: str, copies: int = 0, gap: float = 6.0, rotate: bool = False, rotation_step: float = 90.0,
+               keep_original: bool = False) -> dict:
+    """Fill the free area of an object's plate with copies of it, like Bambu Studio's Fill bed with copies.
+    copies: 0 = as many as fit, N = at most N. Shapes nest by their real outline (brim and brim ears counted), and
+    rotate=True also tries turning them by rotation_step degrees. The original is placed again together with the
+    copies (more fit), unless keep_original=True; the other objects on the plate stay where they are."""
+    import copy
+    pr = P(True)
+    pi, o = pr.find(object)
+    first, spots = arrange_mod.fill(pr, pr.config(), o, pi, copies, gap, rotate, rotation_step, keep_original)
+    if not spots:
+        raise ValueError(f"no room for a copy of '{o.name}' on plate {pi + 1} with a {gap:g} mm gap"
+                         + ("" if keep_original else " (even placing the original again)"))
+
+    def put(ob, spot):
+        x, y, ang = spot
+        if ang:
+            lo, hi = ob.bbox()
+            c0 = (lo + hi) / 2
+            ob.transform(lambda v, a=ang: geometry.rotate(v, a))
+            lo, hi = ob.bbox()
+            c1 = (lo + hi) / 2
+            x, y = x + c1[0] - c0[0], y + c1[1] - c0[1]
+        ob.at = (float(x), float(y))
+
+    template = copy.deepcopy(o)
+    if first:
+        put(o, first)
+    made = []
+    for spot in spots:
+        c = copy.deepcopy(template)
+        c.uid = None
+        c.name = pr.unique_name(o.name)
+        put(c, spot)
+        pr.plates[pi].objects.append(c)
+        made.append(c.name)
+    pr.objects()
+    res = {"object": o.name, "plate": pi + 1, "copies_added": len(made), "objects_on_plate": len(pr.plates[pi].objects),
+           "next": "preview_plate to look at it"}
+    if copies and len(made) < copies:
+        res["note"] = f"only {len(made)} of the {copies} copies fit"
+    if rotate:
+        res["rotated"] = sum(1 for s in spots if s[2])
+    return res
+
+
+@tool()
 def delete_object(object: str) -> dict:
     """Remove an object from the project."""
     pr = P(True)
@@ -660,7 +707,7 @@ def open_in_bambu_studio(path: str = "") -> dict:
 @tool()
 def slice_project(plate: int = 0) -> dict:
     """Slice with Bambu Studio (plate 0 = all). Returns per plate: minutes, grams (total and per filament slot),
-    filament changes, layers and warnings. The sliced project is saved next to the project file."""
+    cost (from the presets' price per kg), filament changes, layers and warnings. The sliced project is saved next to the project file."""
     import copy
     pr = P()
     full = [i + 1 for i, pl in enumerate(pr.plates) if pl.objects]
@@ -684,11 +731,24 @@ def slice_project(plate: int = 0) -> dict:
     finally:
         if os.path.exists(tmp):
             os.remove(tmp)
+    costs = pr.config().get("filament_cost") or []
+    priced = False
     for st in stats:
         st["plate"] = numbers[st["plate"] - 1]
+        per = {}
+        for slot, g in st.get("grams_per_filament", {}).items():
+            try:
+                per[slot] = round(g * float(costs[slot - 1]) / 1000, 2)
+            except (IndexError, TypeError, ValueError):
+                continue
+        if any(per.values()):
+            st["cost"], st["cost_per_filament"], priced = round(sum(per.values()), 2), per, True
     S.sliced = out
     S.sliced_plates = {n: k + 1 for k, n in enumerate(numbers)}
     res = {"sliced_file": out, "plates": stats}
+    if priced:
+        res["cost_note"] = ("cost = grams × each slot's price per kg (filament_cost of its preset, in the currency "
+                            "you use there); change it with set_setting('filament_cost', '25', slot=N)")
     if not plate and sub is not pr:
         res["skipped_empty_plates"] = [n for n in range(1, len(pr.plates) + 1) if n not in full]
         res["note"] = "the sliced file leaves the empty plates out, so its plates are numbered without them"
@@ -1165,6 +1225,37 @@ def make_pa_tower(filament: int = 1, start: float = 0.0, end: float = 0.06, step
 
 
 @tool()
+def make_vfa_test(filament: int = 1, start: float = 40, end: float = 200, step: float = 20) -> dict:
+    """Add a plate with a VFA test (vertical fine artifacts: fine vertical ripples on walls that some speeds cause):
+    one block per outer wall speed from start to end mm/s, the speed engraved on top. Look at the long faces with
+    light from the side and pick the fastest speed without ripples for outer_wall_speed. Bambu Studio's VFA tower
+    changes the speed inside one object; here each block has its own speed."""
+    pr = P(True)
+    if not 1 <= filament <= len(pr.filaments):
+        raise ValueError(f"filament must be a slot 1..{len(pr.filaments)}")
+    speeds = calibration.frange(start, end, abs(step) or 20)[:16]
+    objs = calibration.vfa_blocks(speeds, filament)
+    n, _ = _calib_plate(pr, f"VFA {speeds[0]:g}-{speeds[-1]:g} mm/s", objs, calibration.grid(objs, 3 if len(objs) <= 9 else 4))
+    cfg = pr.config()
+    try:
+        q = float(cfg["filament_max_volumetric_speed"][filament - 1])
+        lw = str(cfg.get("outer_wall_line_width") or "0.42")
+        nozzle = float(cfg["nozzle_diameter"][0])
+        lw = float(lw[:-1]) / 100 * nozzle if lw.endswith("%") else float(lw)
+        lh = float(cfg["layer_height"])
+        cap = q / (lw * lh)
+    except (KeyError, IndexError, TypeError, ValueError, ZeroDivisionError):
+        cap = 0
+    res = {"plate": n, "filament": pr.filaments[filament - 1][0], "speeds_mm_s": speeds,
+           "next": f"slice_project(plate={n}), print, look at the long faces; then "
+                   "set_setting('outer_wall_speed', <fastest clean speed>) or save_process_preset"}
+    if cap and speeds[-1] > cap:
+        res["note"] = (f"this filament's max volumetric speed ({q:g} mm³/s) limits an outer wall of {lw:g} × {lh:g} mm "
+                       f"to about {cap:.0f} mm/s: the blocks above it print at that speed")
+    return res
+
+
+@tool()
 def save_filament_preset(slot: int, name: str, replace: bool = False) -> dict:
     """Save the filament of a slot, with this project's changes for that slot (temperatures, flow ratio, pressure
     advance, plate temperatures...), as a Bambu Studio user preset; it appears after Bambu Studio restarts.
@@ -1339,6 +1430,146 @@ def lay_flat(object: str, face: int = 1) -> dict:
         res["note"] = _EARS_GONE
     if pr.out_of_bed(o):
         res["warning"] = "now (partly) outside the printable area: move_object or arrange"
+    return res
+
+
+def _orient_numbers(s):
+    return {"support_mm2": round(s["support_mm2"]), "on_bed_mm2": round(s["on_bed_mm2"]),
+            "height_mm": round(s["height_mm"], 1)}
+
+
+@tool()
+def orient_object(object: str, choice: int = 1, overhang_angle: float = 45.0, apply: bool = True) -> dict:
+    """Turn an object the way up it prints best, like Bambu Studio's Auto orientation: least area that needs support
+    (faces leaning more than overhang_angle degrees from vertical, not on the bed), enough area on the bed, low
+    height. Returns the 3 best options with those numbers and the current ones; choice=2 or 3 applies another
+    option, apply=False only compares. Look at preview_plate afterwards."""
+    pr = P(apply)
+    _, o = pr.find(object)
+    solids = o.solid_parts()
+    verts = np.concatenate([p.verts for p in solids])
+    base = np.cumsum([0] + [len(p.verts) for p in solids[:-1]])
+    tris = np.concatenate([p.tris + b for p, b in zip(solids, base, strict=True)])
+    current, opts = orient.options(verts, tris, overhang_angle)
+    if not 1 <= choice <= len(opts):
+        raise ValueError(f"choice must be 1..{len(opts)}")
+    res = {"name": o.name, "current": _orient_numbers(current),
+           "options": [{"option": i + 1, **_orient_numbers(s)} for i, s in enumerate(opts)]}
+    pick = opts[choice - 1]
+    if np.allclose(pick["rotation"], np.eye(3), atol=1e-6):
+        res["result"] = "it is already the best way up" if choice == 1 else "this option is how it is now"
+        return res
+    if not apply:
+        res["result"] = "not applied: orient_object(..., choice=N) turns it"
+        return res
+    R = pick["rotation"]
+    dropped = o.transform(lambda v: v @ R.T)
+    res["applied"] = choice
+    res["size_mm"] = [round(float(v), 1) for v in o.size()]
+    if dropped:
+        res["note"] = _EARS_GONE
+    if pr.out_of_bed(o):
+        res["warning"] = "now (partly) outside the printable area: move_object or arrange"
+    return res
+
+
+@tool()
+def split_object(object: str, into: str = "objects") -> dict:
+    """Split an object into its separate pieces, like Bambu Studio's Split: into='objects' makes one object per
+    piece (each part of a multi-part object becomes an object too), into='parts' keeps one object whose parts are
+    the pieces, so each can get its own filament. Pieces stay where they are; painted colors are kept, modifiers
+    and negative parts go with the piece they overlap."""
+    if into not in ("objects", "parts"):
+        raise ValueError("into must be objects or parts")
+    pr = P(True)
+    pi, o = pr.find(object)
+    made, notes = meshops.split(o, into)
+    pl = pr.plates[pi]
+    k = pl.objects.index(o)
+    pl.objects.remove(o)
+    by_part = into == "objects" and len([p for p in o.parts if p.subtype == "normal_part"]) > 1
+    for i, ob in enumerate(made):                    # named after their part, or the object's name, numbered
+        ob.name = pr.unique_name(ob.parts[0].name if by_part else (o.name if i == 0 else f"{o.name} {i + 1}"))
+        pl.objects.insert(k + i, ob)
+    pr.objects()
+    res = {"split": o.name, "into": into,
+           "result": [{"id": ob.uid, "name": ob.name, "parts": len(ob.parts),
+                       "size_mm": [round(float(v), 1) for v in ob.size()]} for ob in made]}
+    if into == "parts":
+        res["parts"] = [p.name for p in made[0].parts]
+    if notes:
+        res["notes"] = notes
+    return res
+
+
+@tool()
+def merge_objects(objects: list[str], name: str = "") -> dict:
+    """Join objects of the same plate into one object with several parts, where they are now, like Bambu Studio's
+    Assemble: they move and print as one (e.g. a model and its base in another color). Each part keeps its filament
+    and painting; the merged object takes the first object's settings (the others' are listed if they differ)."""
+    pr = P(True)
+    if len(objects or []) < 2:
+        raise ValueError("give at least two objects")
+    found = [pr.find(r) for r in objects]
+    if len({id(o) for _, o in found}) < len(found):
+        raise ValueError("the same object is named twice")
+    if len({pi for pi, _ in found}) > 1:
+        raise ValueError("the objects are on different plates: move them onto one plate first")
+    pi = found[0][0]
+    objs = [o for _, o in found]
+    ob, dropped = meshops.merge(objs, name or objs[0].name)
+    pl = pr.plates[pi]
+    k = min(pl.objects.index(o) for o in objs)
+    for o in objs:
+        pl.objects.remove(o)
+    if name:
+        ob.name = pr.unique_name(name)
+    pl.objects.insert(k, ob)
+    pr.objects()
+    res = {"id": ob.uid, "name": ob.name, "plate": pi + 1, "parts": [p.name for p in ob.parts],
+           "size_mm": [round(float(v), 1) for v in ob.size()]}
+    if dropped:
+        res["note"] = f"settings of the other objects that differ from the first one's were not kept: {dropped}"
+    return res
+
+
+@tool()
+def boolean_objects(object: str, tool_object: str, operation: str = "difference", keep_tool: bool = False,
+                    part: str = "") -> dict:
+    """Mesh boolean between two objects where they are on the plate, like Bambu Studio's Mesh boolean.
+    difference: cut tool_object's shape out of object (a hole, a slot, a lettering); intersection: keep only what
+    they share; union: weld tool_object onto object (onto its part `part`, default the biggest). The result keeps
+    object's name, settings and filaments; painted colors stay, new faces take the part's filament. The tool object
+    is removed unless keep_tool=True. Both must be closed solids (check_object)."""
+    pr = P(True)
+    pi, o = pr.find(object)
+    ti, t = pr.find(tool_object)
+    if o is t:
+        raise ValueError("object and tool_object are the same object")
+    if pi != ti:
+        raise ValueError("the two objects are on different plates")
+    off = meshops.offset(o)
+    new, volumes, shared = meshops.boolean(o, t, operation, part)
+    o.parts = new
+    lo, hi = o.bbox()
+    c = (lo + hi) / 2
+    o.at = (float(c[0] + off[0]), float(c[1] + off[1]))
+    if not keep_tool:
+        pr.plates[ti].objects.remove(t)
+    res = {"name": o.name, "operation": operation,
+           "volume_mm3": {n: {"before": round(a, 1), "after": round(b, 1)} for n, (a, b) in volumes.items()},
+           "size_mm": [round(float(v), 1) for v in o.size()], "tool_object": "kept" if keep_tool else "removed"}
+    if shared < 1e-3:
+        res["warning"] = ("the two objects do not touch (look at preview_plate): " +
+                          ("nothing was cut out" if operation == "difference" else
+                           "the part is now two separate pieces"))
+    notes = []
+    if any(p.tri_attrs for p in o.parts):
+        notes.append("painted colors are kept; the new faces take the part's filament")
+    if o.brim_ears:
+        notes.append("the brim ears were kept where they were: check them (add_brim_ears again if needed)")
+    if notes:
+        res["notes"] = notes
     return res
 
 

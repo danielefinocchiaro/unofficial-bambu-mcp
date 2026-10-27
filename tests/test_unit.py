@@ -502,6 +502,105 @@ def test_presets_deleted_in_bambu_studio_while_running(studio_user):
     assert s.get_project()["filaments"][0]["preset"].startswith("Bambu PLA Basic")
 
 
+def test_orient_stands_a_lying_cylinder_and_keeps_a_good_one():
+    import math
+
+    from unofficial_bambu_mcp import orient
+    v, t = geometry.cylinder(20, 60)
+    current, opts = orient.options(geometry.rotate(v, 90, "x"), t)          # lying on its side
+    assert current["support_mm2"] > 500 and opts[0]["support_mm2"] < 1
+    assert abs(opts[0]["on_bed_mm2"] - math.pi * 100) < 5 and abs(opts[0]["height_mm"] - 60) < 0.1
+    current, opts = orient.options(v, t)                                     # standing: already the best
+    assert np.allclose(opts[0]["rotation"], np.eye(3))
+    assert len({(round(o["support_mm2"]), round(o["on_bed_mm2"])) for o in opts}) == len(opts)   # no twins
+
+
+@needs_bambu
+def test_fill_plate_with_copies(tmp_path, monkeypatch):
+    from shapely import affinity
+
+    from unofficial_bambu_mcp import arrange
+    from unofficial_bambu_mcp import server as s
+    monkeypatch.setenv("UBMCP_DIR", str(tmp_path))
+    s.new_project("fill", "P1S")
+    s.add_shape("cylinder", diameter=30, height=5, name="coin")
+    s.add_shape("box", width=60, depth=60, height=10, name="block", x=60, y=200)
+    block_at = s.P().find("block")[1].at
+    r = s.fill_plate("coin")
+    pr = s.P()
+    assert r["copies_added"] >= 30 and pr.find("block")[1].at == block_at          # the other object stays
+    placed = [(o.name, affinity.translate(arrange.footprint(o, pr.config()), *o.at)) for o in pr.plates[0].objects]
+    assert arrange.check(placed, pr.info["bed"], 6.0, None) == []                     # nothing closer than the gap
+    s.new_project("fill2", "P1S")
+    s.add_shape("box", width=20, depth=10, height=5, name="tag", x=50, y=50)
+    assert s.fill_plate("tag", copies=5, keep_original=True)["copies_added"] == 5
+    assert s.P().find("tag")[1].at == (50.0, 50.0)
+
+
+@needs_bambu
+def test_split_merge_and_boolean(tmp_path, monkeypatch):
+    import math
+
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    from unofficial_bambu_mcp import server as s
+    monkeypatch.setenv("UBMCP_DIR", str(tmp_path))
+    s.new_project("ops", "P1S")
+    s.add_shape("box", width=40, depth=40, height=20, name="block", x=80, y=80)
+    s.add_shape("box", width=10, depth=10, height=10, name="small", x=160, y=160)
+    with pytest.raises(ToolError, match="single piece"):
+        s.split_object("block")
+    m = s.merge_objects(["block", "small"], name="pair")
+    assert m["parts"] == ["block", "small"] and len(s.P().plates[0].objects) == 1
+    r = s.split_object("pair")                                   # back where they were, named after their parts
+    pr = s.P()
+    assert [x["name"] for x in r["result"]] == ["block", "small"]
+    assert pr.find("block")[1].at == (80.0, 80.0) and pr.find("small")[1].at == (160.0, 160.0)
+    # one part made of two separate boxes: into parts, each keeps the part's filament
+    from unofficial_bambu_mcp.project import Obj, Part
+    v, t = geometry.box(10, 10, 10)
+    twin = Obj("twin", [Part("twin", np.vstack([v, v + [30, 0, 0]]), np.vstack([t, t + len(v)]), filament=1)],
+               at=(100.0, 200.0))
+    pr.plates[0].objects.append(twin)
+    r = s.split_object("twin", into="parts")
+    assert r["parts"] == ["twin 1", "twin 2"] and len(pr.find("twin")[1].parts) == 2
+    # a hole through the block: exact volume, painting kept on the untouched faces, the tool removed
+    s.new_project("bool", "P1S")
+    s.add_shape("box", width=40, depth=40, height=20, name="block", x=100, y=100)
+    blk = s.P().find("block")[1].parts[0]
+    blk.tri_attrs = {"paint_color": ["8"] * len(blk.tris)}
+    s.add_shape("cylinder", diameter=10, height=30, name="drill", x=100, y=100)
+    r = s.boolean_objects("block", "drill", "difference")
+    after = r["volume_mm3"]["block"]["after"]
+    assert abs(after - (32000 - math.pi * 25 * 20)) < 40 and r["tool_object"] == "removed"
+    part = s.P().find("block")[1].parts[0]
+    colors = part.tri_attrs["paint_color"]
+    assert colors.count("8") >= 10 and "" in colors                 # old faces painted, the hole's faces not
+    s.add_shape("box", width=10, depth=10, height=10, name="far", x=200, y=200)
+    assert "do not touch" in s.boolean_objects("block", "far", "union", keep_tool=True)["warning"]
+    s.add_shape("box", width=40, depth=10, height=10, name="bar", x=100, y=100)
+    r = s.boolean_objects("block", "bar", "intersection")
+    assert 0 < r["volume_mm3"]["block"]["after"] < 4000
+
+
+@needs_bambu
+def test_vfa_test_and_cost(tmp_path, monkeypatch):
+    from unofficial_bambu_mcp import server as s
+    monkeypatch.setenv("UBMCP_DIR", str(tmp_path))
+    s.new_project("vfa", "P1S", filaments=[{"preset": "Bambu PLA Basic", "color": "#FFFFFF"}])
+    r = s.make_vfa_test(1, start=60, end=120, step=20)
+    objs = s.P().plates[0].objects
+    assert r["speeds_mm_s"] == [60, 80, 100, 120] and [o.settings["outer_wall_speed"] for o in objs] == ["60", "80", "100", "120"]
+    assert s.check_print_risks()[0]["risks"] == "none found" and "note" not in r
+    s.set_setting("filament_max_volumetric_speed", "5", slot=1)          # 5 / (0.42 × 0.2) ≈ 60 mm/s
+    assert "about 60 mm/s" in s.make_vfa_test(1, start=60, end=120, step=20)["note"]
+    s.new_project("cost", "P1S", filaments=[{"preset": "Bambu PLA Basic", "color": "#FFFFFF"}])
+    s.add_shape("box", width=20, depth=20, height=10, name="cube")
+    s.set_setting("filament_cost", "30", slot=1)
+    p = s.slice_project(1)["plates"][0]
+    assert abs(p["cost"] - p["grams_per_filament"][1] * 30 / 1000) < 0.011 and p["cost_per_filament"] == {1: p["cost"]}
+
+
 def _cube_xml(oid, size):
     s = size
     vs = [(0, 0, 0), (s, 0, 0), (s, s, 0), (0, s, 0), (0, 0, s), (s, 0, s), (s, s, s), (0, s, s)]
