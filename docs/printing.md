@@ -49,7 +49,7 @@ The printer is found by SSDP and, if needed, by a scan of port 8883 on your netw
 
 ## Camera and SD card
 
-These work with the printer in cloud mode too, with the same LAN access code (tested on a P1S).
+These work with the printer in cloud mode too, with the same LAN access code. The camera, the listing and the download were tested on a P1S; deleting is covered by tests on a simulated SD card only.
 
 - `printer_camera`: one picture from the camera (P1 and A1 series: JPEG frames on port 6000 over TLS). The assistant
   sees the plate: how a print is going, a part that came off, spaghetti. X1 and H2 printers stream over RTSP, which is
