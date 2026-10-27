@@ -708,6 +708,81 @@ def test_prime_tower_place_kept_from_file(tmp_path, monkeypatch):
     assert s.get_setting("wipe_tower_x")["value"] != ["120.5"] and "prime_tower_xy" not in s.get_project()["plates"][0]
 
 
+def test_split_at_keeps_a_closed_solid_and_painting():
+    from unofficial_bambu_mcp import painting
+    v, t = geometry.cylinder(20, 30, segments=24)
+    attrs = {"paint_color": ["8"] * len(t)}
+    v2, t2, a2 = painting.split_at(v, t, 12.0, attrs)
+    m0, m1 = geometry.to_manifold(v, t), geometry.to_manifold(v2, t2)
+    assert m1.status() == geometry.m3.Error.NoError and abs(m1.volume() - m0.volume()) < 1e-3
+    assert len(t2) > len(t) and a2["paint_color"] == ["8"] * len(t2)                # whole leaves stay as they are
+    assert np.isclose(v2[:, 2], 12.0).sum() == 48              # on each side: the vertical edge and the diagonal
+
+
+def test_slicer_closes_a_stuck_bambu_studio(monkeypatch):
+    import time
+
+    from unofficial_bambu_mcp import slicer
+    if slicer._cpu_seconds(1) is None:
+        pytest.skip("ps cannot tell CPU time here")
+    monkeypatch.setattr(slicer, "STALL_S", 4)
+    t = time.time()
+    with pytest.raises(slicer.SliceError, match="no CPU use"):
+        slicer.run(["sleep", "60"], timeout=60)
+    assert time.time() - t < 20
+    assert slicer.run(["echo", "ok"], timeout=30) == (0, "ok\n")
+
+
+@needs_bambu
+def test_height_ranges_plate_settings_and_painting(tmp_path, monkeypatch):
+    import zipfile
+
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    from unofficial_bambu_mcp import server as s
+    monkeypatch.setenv("UBMCP_DIR", str(tmp_path))
+    s.new_project("p3", "P1S", filaments=[{"preset": "Bambu PLA Basic", "color": "#FFFFFF"},
+                                          {"preset": "Bambu PLA Basic", "color": "#FF0000"}])
+    s.add_shape("box", width=20, depth=20, height=20, name="cube")
+    s.set_height_range("cube", 0, 5, {"sparse_infill_density": "100%"})
+    s.set_height_range("cube", 10, 25, {"layer_height": "0.12", "filament": 2})       # clipped to the top
+    r = s.set_height_range("cube", 0, 5, {"wall_loops": "4", "sparse_infill_density": None})   # same band: updated
+    assert r["height_ranges"] == [{"from": 0.0, "to": 5.0, "settings": {"wall_loops": "4"}},
+                                  {"from": 10.0, "to": 20.0, "settings": {"layer_height": "0.12", "filament": "2"}}]
+    with pytest.raises(ToolError, match="overlaps"):
+        s.set_height_range("cube", 4, 12, {"wall_loops": "3"})
+    with pytest.raises(ToolError, match="filament setting"):
+        s.set_height_range("cube", 5, 8, {"nozzle_temperature": "230"})
+    s.set_plate_settings(1, bed_type="High Temp Plate", print_sequence="by object", first_layer_filaments=[2, 1],
+                         spiral_vase="off", prime_tower=[100, 150])
+    with pytest.raises(ToolError, match="bed_type"):
+        s.set_plate_settings(1, bed_type="Glass")
+    print(s.paint_object("cube", "color", filament=2, z_from=2, z_to=4))
+    s.paint_object("cube", "fuzzy_skin", facing="sides")
+    saved = s.save_project()["saved"]
+    with zipfile.ZipFile(saved) as z:
+        xml = z.read("Metadata/layer_config_ranges.xml").decode()
+        ms = z.read("Metadata/model_settings.config").decode()
+    assert xml.count("<range") == 2 and 'opt_key="extruder">0<' in xml and 'opt_key="layer_height">0.2<' in xml
+    assert 'key="first_layer_print_sequence" value="2 1"' in ms and 'key="spiral_mode" value="false"' in ms
+    s.open_project(saved)
+    o = s.P().find("cube")[1]
+    assert [r["from"] for r in o.height_ranges] == [0.0, 10.0] and o.height_ranges[1]["settings"]["extruder"] == "2"
+    pl = s.get_project()["plates"][0]
+    assert pl["settings"]["bed_type"] == "High Temp Plate" and pl["prime_tower_xy"] == [100.0, 150.0]
+    part = o.parts[0]
+    assert any(part.tri_attrs["paint_color"]) and any(part.tri_attrs["paint_fuzzy_skin"])
+    zc = part.verts[part.tris][:, :, 2].mean(axis=1) - part.verts[:, 2].min()
+    red = np.array([x != "" for x in part.tri_attrs["paint_color"]])
+    assert red.any() and (zc[red] > 2 - 1e-6).all() and (zc[red] < 4 + 1e-6).all()   # sharp band edges
+    assert s.remove_height_range("cube")["removed"] == 2
+    o.layer_profile = [0, 0.2, 10, 0.1, 20, 0.2]
+    s.transform_object("cube", rotate_z=30)
+    assert o.layer_profile                                                    # same height: kept
+    s.transform_object("cube", scale=2)
+    assert o.layer_profile == []                                              # made for the old height
+
+
 def _cube_xml(oid, size):
     s = size
     vs = [(0, 0, 0), (s, 0, 0), (s, s, 0), (0, s, 0), (0, 0, s), (s, 0, s), (s, s, s), (0, s, s)]

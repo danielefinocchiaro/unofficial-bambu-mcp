@@ -23,6 +23,7 @@ from . import (
     meshops,
     orient,
     paint,
+    painting,
     presets,
     preview,
     printer,
@@ -264,6 +265,68 @@ def rename_plate(plate: int, name: str) -> dict:
     """Give a plate a name (shown in Bambu Studio)."""
     P(True).plate(plate).name = name
     return {"plate": plate, "name": name}
+
+
+SEQUENCES = ("by layer", "by object")
+
+
+@tool()
+def set_plate_settings(plate: int, bed_type: str = "", print_sequence: str = "",
+                       first_layer_filaments: list[int] | None = None, spiral_vase: str = "",
+                       prime_tower: list[float] | None = None) -> dict:
+    """Settings of one plate, like Bambu Studio's plate settings; they win over the project's on that plate.
+    bed_type: Cool Plate, Engineering Plate, High Temp Plate, Textured PEI Plate or Supertack Plate.
+    print_sequence: 'by layer', or 'by object' (each object printed to the end before the next).
+    first_layer_filaments: order of the filament slots on the first layer, e.g. [2, 1].
+    spiral_vase: 'on' or 'off'. prime_tower: [x, y] in mm, where its corner goes (e.g. between objects).
+    'global' (or [] for the lists) goes back to the project's choice; empty leaves it as it is."""
+    pr = P(True)
+    pl = pr.plate(plate)
+    n = len(pr.filaments)
+    if bed_type:
+        if bed_type == "global":
+            pl.settings.pop("bed_type", None)
+        elif bed_type in PLATE_TEMP:
+            pl.settings["bed_type"] = bed_type
+        else:
+            raise ValueError(f"bed_type must be one of {list(PLATE_TEMP)} or 'global'")
+    if print_sequence:
+        if print_sequence == "global":
+            pl.settings.pop("print_sequence", None)
+        elif print_sequence in SEQUENCES:
+            pl.settings["print_sequence"] = print_sequence
+        else:
+            raise ValueError("print_sequence must be 'by layer', 'by object' or 'global'")
+    if first_layer_filaments is not None:
+        if not first_layer_filaments:
+            pl.settings.pop("first_layer_print_sequence", None)
+        elif sorted(set(first_layer_filaments)) != sorted(first_layer_filaments) or \
+                not all(1 <= f <= n for f in first_layer_filaments):
+            raise ValueError(f"first_layer_filaments: filament slots 1..{n}, each once")
+        else:
+            pl.settings["first_layer_print_sequence"] = " ".join(str(int(f)) for f in first_layer_filaments)
+    if spiral_vase:
+        if spiral_vase not in ("on", "off", "global"):
+            raise ValueError("spiral_vase must be 'on', 'off' or 'global'")
+        if spiral_vase == "global":
+            pl.settings.pop("spiral_mode", None)
+        else:
+            pl.settings["spiral_mode"] = "true" if spiral_vase == "on" else "false"
+    if prime_tower is not None:
+        if not prime_tower:
+            pl.tower = None
+        else:
+            bw, bd = pr.info["bed"]
+            if len(prime_tower) != 2 or not (0 <= prime_tower[0] < bw and 0 <= prime_tower[1] < bd):
+                raise ValueError(f"prime_tower is [x, y] on the {bw:g} × {bd:g} mm plate")
+            pl.tower = (float(prime_tower[0]), float(prime_tower[1]))
+    res = {"plate": plate, "name": pl.name, "settings": dict(pl.settings)}
+    if pl.tower:
+        res["prime_tower_xy"] = list(pl.tower)
+    if pl.settings.get("print_sequence") == "by object" and len(pl.objects) > 1:
+        res["note"] = ("by object: the print head must pass over finished objects, so keep them apart and not too "
+                       "tall (Bambu Studio's slicing says if they collide)")
+    return res
 
 
 @tool()
@@ -1981,6 +2044,112 @@ def remove_brim_ears(object: str) -> dict:
     if o.settings.get("brim_type") == "brim_ears":
         del o.settings["brim_type"]
     return {"name": o.name, "removed": n, "brim_type": o.settings.get("brim_type") or pr.config().get("brim_type")}
+
+
+def _range_value(pr, key, v):
+    if key == "extruder":
+        f = int(v)
+        if not 0 <= f <= len(pr.filaments):
+            raise ValueError(f"filament must be a slot 1..{len(pr.filaments)} (0 = the object's)")
+        return str(f)
+    if pr.key_kind(key) not in ("process", None):
+        raise ValueError(f"'{key}' is a {pr.key_kind(key)} setting: it cannot change by height")
+    return str(v)
+
+
+@tool()
+def set_height_range(object: str, z_from: float, z_to: float, settings: dict) -> dict:
+    """Settings for a height band of an object, like Bambu Studio's Height range modifier. Heights are mm from the
+    object's bottom. E.g. z_from=0, z_to=5, settings={"sparse_infill_density": "100%"}; {"layer_height": "0.12"}
+    for finer layers there (variable layer height); {"filament": 2} to print that band with another filament slot
+    (a color band). A band with the same z_from and z_to is updated (null removes a key); bands cannot overlap."""
+    pr = P(True)
+    _, o = pr.find(object)
+    h = float(o.size()[2])
+    if not 0 <= z_from < z_to or z_from >= h:
+        raise ValueError(f"the band must be inside the object: 0 <= z_from < z_to, z_from below {h:.2f} mm")
+    z_to = min(float(z_to), h)
+    same = next((r for r in o.height_ranges if abs(r["from"] - z_from) < 1e-6 and abs(r["to"] - z_to) < 1e-6), None)
+    for r in o.height_ranges:
+        if r is not same and r["from"] < z_to - 1e-6 and z_from < r["to"] - 1e-6:
+            raise ValueError(f"it overlaps the band {r['from']:g}-{r['to']:g} mm: change that one or remove it")
+    cur = dict(same["settings"]) if same else {}
+    for k, v in (settings or {}).items():
+        key = "extruder" if k == "filament" else k
+        if v is None:
+            cur.pop(key, None)
+        else:
+            cur[key] = _range_value(pr, key, v)
+    if same:
+        same["settings"] = cur
+    else:
+        o.height_ranges.append({"from": float(z_from), "to": z_to, "settings": cur})
+        o.height_ranges.sort(key=lambda r: r["from"])
+    o.height_ranges = [r for r in o.height_ranges if r["settings"]]
+    return {"name": o.name, "height_mm": round(h, 2), "height_ranges": _ranges_view(o)}
+
+
+def _ranges_view(o):
+    return [{"from": r["from"], "to": r["to"],
+             "settings": {("filament" if k == "extruder" else k): v for k, v in r["settings"].items()}}
+            for r in o.height_ranges]
+
+
+@tool()
+def remove_height_range(object: str, z_from: float = -1) -> dict:
+    """Remove the height band of an object that starts at z_from (mm), or all its bands (z_from=-1)."""
+    pr = P(True)
+    _, o = pr.find(object)
+    before = len(o.height_ranges)
+    o.height_ranges = [] if z_from < 0 else [r for r in o.height_ranges if abs(r["from"] - z_from) > 1e-6]
+    if len(o.height_ranges) == before:
+        raise ValueError(f"'{o.name}' has no band starting at {z_from:g} mm: {_ranges_view(o)}")
+    return {"name": o.name, "removed": before - len(o.height_ranges), "height_ranges": _ranges_view(o)}
+
+
+@tool()
+def paint_object(object: str, paint: str, filament: int = 0, z_from: float = 0, z_to: float = 0,
+                 facing: str = "all", angle: float = 45.0, clear: bool = False, part: str = "") -> dict:
+    """Paint a region of an object, like Bambu Studio's painting tools. paint: 'color' (with filament=N),
+    'support' (supports there), 'block_support' (none there), 'seam' (put the seam there), 'block_seam',
+    'fuzzy_skin'. Region: the height band z_from..z_to (mm from the object's bottom; z_to=0 = to the top) and the
+    faces looking 'top', 'bottom', 'sides', 'front', 'back', 'left', 'right', 'overhangs' (leaning more than `angle`
+    degrees from vertical, for supports) or 'all'. clear=True removes that painting there. Triangles crossing a
+    band's edge are split, so the edge is sharp. part: only that part. Look at preview_plate (colors) afterwards."""
+    pr = P(True)
+    _, o = pr.find(object)
+    if paint not in painting.ATTR:
+        raise ValueError(f"paint must be one of {', '.join(painting.ATTR)}")
+    if facing not in painting.FACING:
+        raise ValueError(f"facing must be one of {', '.join(painting.FACING)}")
+    if paint == "color" and not clear and not 1 <= filament <= len(pr.filaments):
+        raise ValueError(f"give the filament slot to paint with: filament=1..{len(pr.filaments)}")
+    state = 0 if clear else (filament if paint == "color" else painting.STATE[paint])
+    lo, hi = o.bbox()
+    z_lo = lo[2] + z_from if z_from > 0 else None
+    z_hi = lo[2] + z_to if z_to > 0 else None
+    if z_lo is not None and z_hi is not None and z_hi <= z_lo:
+        raise ValueError("z_to must be above z_from")
+    targets = [p for p in o.solid_parts() if p.subtype == "normal_part" and (not part or p.name.lower() == part.lower())]
+    if not targets:
+        raise ValueError(f"'{o.name}' has no solid part named '{part}': {[p.name for p in o.solid_parts()]}")
+    done = {p.name: painting.apply(p, paint, state, z_lo, z_hi, facing, angle, bed_z=lo[2]) for p in targets}
+    res = {"name": o.name, "paint": paint, "cleared" if clear else "painted_triangles": done}
+    if not sum(done.values()):
+        res["warning"] = "no triangle is in that region: check the heights and the facing"
+    notes = []
+    if paint in ("support", "block_support") and not clear:
+        if o.settings.get("enable_support", pr.config().get("enable_support")) != "1":
+            notes.append("supports are off for this object: Bambu Studio prints painted supports only with "
+                         "set_setting('enable_support', '1') (or set_object_setting)")
+        if paint == "support":
+            notes.append("with support_type 'normal(manual)' or 'tree(manual)' supports go only where painted; "
+                         "the (auto) types add them wherever they are needed too")
+    if paint == "color" and not clear and filament not in o.filaments():
+        notes.append(f"this object now also prints with filament {filament}: a prime tower is added")
+    if notes:
+        res["notes"] = notes
+    return res
 
 
 # ---------------------------------------------------------------- standalone test prints

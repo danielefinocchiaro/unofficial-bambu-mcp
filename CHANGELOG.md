@@ -50,6 +50,13 @@ Added
 - `make_vfa_test`: blocks with their own outer wall speed (40-200 mm/s), the speed engraved on top, and a note when
   the filament's max volumetric speed caps them.
 - `slice_project` gives the cost per plate and per filament, from the presets' price per kg.
+- `set_height_range` / `remove_height_range`: settings per height band (`Metadata/layer_config_ranges.xml`):
+  infill, walls, layer height (variable layer height) or filament (color by height). Opened files keep their
+  ranges and their variable layer height profile (both were dropped before).
+- `set_plate_settings`: build plate, print sequence, first-layer filament order, spiral vase, prime tower place.
+- `paint_object`: color, support, block support, seam, block seam and fuzzy skin painting on a height band and/or
+  faces looking one way (top, bottom, sides, front, back, left, right, overhangs); triangles crossing a band edge are
+  split so the edge is sharp. Fuzzy skin painting in opened files is kept (it was dropped).
 - `printer_camera`: a picture from the camera (P1/A1, port 6000), in cloud mode too.
 - `printer_files`, `download_printer_file` (a timelapse comes with its last frame) and `delete_printer_files` (by name
   or age, two steps with a code tied to the exact files, refused during a print): the SD card over FTPS.
@@ -88,6 +95,9 @@ Fixed
 - Opened projects keep where the prime tower of each plate was (`wipe_tower_x/y`): Bambu Studio never lists them
   among the changed settings, so they were reset to a corner and a tower placed between objects collided with them.
   `arrange` and `fill_plate` still move it to the corner they keep free; switching printer resets it.
+- A Bambu Studio command line that hangs (no CPU use for 90 s) is closed with a clear error instead of waiting up
+  to 30 minutes; while it hung, macOS took it for the running app and Bambu Studio could not open files.
+  `open_in_bambu_studio` starts the app itself when only command-line runs are alive.
 - `cut_object`: the upper piece lies on its cut face (with `flip_top`, the default, it was turned upside down onto
   its top). `flip_top` is replaced by `place` (auto, cut_down, keep).
 

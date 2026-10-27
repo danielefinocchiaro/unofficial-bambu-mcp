@@ -21,7 +21,9 @@ PROD = "http://schemas.microsoft.com/3dmanufacturing/production/2015/06"
 NS = (f'xmlns="{CORE}" xmlns:BambuStudio="http://schemas.bambulab.com/package/2021" '
       f'xmlns:p="{PROD}" requiredextensions="p"')
 HEAD = '<?xml version="1.0" encoding="UTF-8"?>\n'
-TRI_ATTRS = ("paint_color", "paint_supports", "paint_seam", "face_property")
+TRI_ATTRS = ("paint_color", "paint_supports", "paint_seam", "paint_fuzzy_skin", "face_property")
+RANGES_FILE = "Metadata/layer_config_ranges.xml"
+PROFILE_FILE = "Metadata/layer_heights_profile.txt"
 # extra files we can carry over unchanged when plates are not renumbered
 PASSTHROUGH = ()
 LAYER_GCODE_FILE = "Metadata/custom_gcode_per_layer.xml"
@@ -56,7 +58,8 @@ def write(project, path, title=None):
              ' <metadata name="BambuStudio:3mfVersion">1</metadata>\n',
              f' <metadata name="Title">{escape(title)}</metadata>\n', ' <resources>\n']
     build, rels, conf = [], [], [HEAD, "<config>\n"]
-    plate_objs, ears = [], []
+    plate_objs, ears, ranges, profiles = [], [], [], []
+    base_lh = project.config().get("layer_height") or "0.2"
     next_id, n_file = 1, 0
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         for pi, plate in enumerate(project.plates):
@@ -107,6 +110,12 @@ def write(project, path, title=None):
                 # brim ears relative to the object as written (vertices - c), just under the bed: Bambu Studio skips
                 # points above it
                 ears.append((n_file, [(x - c[0], y - c[1], lo[2] - c[2] - 0.001, r) for x, y, r in ob.brim_ears]))
+                if ob.height_ranges:                 # Bambu Studio always has both keys in a range, and
+                    lh = str(ob.settings.get("layer_height") or base_lh)     # hangs on ranges without them
+                    ranges.append((n_file, [dict(r, settings={"layer_height": lh, "extruder": "0", **r["settings"]})
+                                            for r in ob.height_ranges]))
+                if ob.layer_profile:
+                    profiles.append((n_file, ob.layer_profile))
                 build.append(f'  <item objectid="{oid}" p:UUID="{uid()}" '
                              f'transform="1 0 0 0 1 0 0 0 1 {pos[0]:.4f} {pos[1]:.4f} {pos[2]:.4f}" printable="1"/>\n')
                 conf.append(f'  <object id="{oid}">\n    <metadata key="name" value={quoteattr(ob.name)}/>\n'
@@ -156,9 +165,56 @@ def write(project, path, title=None):
         txt = brim.write_points(ears)            # objects are numbered in build order, from 1
         if txt:
             z.writestr(brim.EARS_FILE, txt)
+        if ranges:
+            z.writestr(RANGES_FILE, _ranges_xml(ranges))
+        if profiles:
+            z.writestr(PROFILE_FILE, "".join(f"object_id={k}|" + ";".join(f"{v:f}" for v in prof) + "\n"
+                                             for k, prof in profiles))
         for name, data in project.extras.items():
             z.writestr(name, data)
     return path
+
+
+def _ranges_xml(ranges):
+    """Metadata/layer_config_ranges.xml (bbs_3mf.cpp): per object, height ranges with their own settings."""
+    out = ['<?xml version="1.0" encoding="utf-8"?>\n<objects>\n']
+    for k, rs in ranges:
+        out.append(f' <object id="{k}">\n')
+        for r in rs:
+            out.append(f'  <range min_z="{r["from"]:g}" max_z="{r["to"]:g}">\n')
+            out += [f'   <option opt_key={quoteattr(key)}>{escape(str(v))}</option>\n' for key, v in r["settings"].items()]
+            out.append("  </range>\n")
+        out.append(" </object>\n")
+    out.append("</objects>\n")
+    return "".join(out)
+
+
+def _read_ranges(data):
+    """{object number: [{from, to, settings}]} from Metadata/layer_config_ranges.xml."""
+    out = {}
+    for ob in ET.fromstring(data).iter("object"):
+        rs = []
+        for r in ob.iter("range"):
+            settings = {o.get("opt_key"): (o.text or "") for o in r.iter("option") if o.get("opt_key")}
+            rs.append({"from": float(r.get("min_z", 0)), "to": float(r.get("max_z", 0)), "settings": settings})
+        if rs:
+            out[int(ob.get("id", 0))] = sorted(rs, key=lambda r: r["from"])
+    return out
+
+
+def _read_profiles(text):
+    """{object number: [z, h, ...]} from Metadata/layer_heights_profile.txt."""
+    out = {}
+    for line in text.splitlines():
+        head, _, data = line.partition("|")
+        if head.startswith("object_id="):
+            try:
+                vals = [float(v) for v in data.split(";") if v.strip()]
+            except ValueError:
+                continue
+            if len(vals) >= 6 and len(vals) % 2 == 0:
+                out[int(head.split("=", 1)[1])] = vals
+    return out
 
 
 def _layer_gcodes_xml(project):
@@ -256,7 +312,7 @@ def _parse_model(xml_bytes):
             for t in mesh.find(q + "triangles").iter(q + "triangle"):
                 tris.append([int(t.get("v1")), int(t.get("v2")), int(t.get("v3"))])
                 for k in TRI_ATTRS:
-                    attrs[k].append(t.get(k))
+                    attrs[k].append(t.get(k) or "")
             attrs = {k: a for k, a in attrs.items() if any(a)}
             out[oid] = ("mesh", verts, np.array(tris, np.int64).reshape(-1, 3), attrs)
             continue
@@ -371,9 +427,8 @@ def read(path):
         extras = {n: z.read(n) for n in PASSTHROUGH if n in names}
         ear_pts = brim.read_points(z.read(brim.EARS_FILE).decode()) if brim.EARS_FILE in names else {}
         layer_gcodes = _read_layer_gcodes(z.read(LAYER_GCODE_FILE)) if LAYER_GCODE_FILE in names else {}
-        for n in ("Metadata/layer_heights_profile.txt", "Metadata/layer_config_ranges.xml"):
-            if n in names:
-                warnings.append(f"{n.split('/')[-1]} (variable layer height / height ranges) is not carried over")
+        file_ranges = _read_ranges(z.read(RANGES_FILE)) if RANGES_FILE in names else {}
+        file_profiles = _read_profiles(z.read(PROFILE_FILE).decode()) if PROFILE_FILE in names else {}
         if any(n.startswith("Metadata/plate_") and n.endswith(".gcode") for n in names):
             warnings.append("the file contains sliced G-code: it will be re-sliced after changes")
 
@@ -459,6 +514,8 @@ def read(path):
         settings = {k: v for k, v in md.items() if k not in ("name", "extruder")}
         name = md.get("name") or f"Object {oid}"
         ob = built[(oid, k_inst)] = Obj(name if k_inst == 0 else f"{name} {k_inst + 1}", parts, settings=settings)
+        ob.height_ranges = [dict(r, settings=dict(r["settings"])) for r in file_ranges.get(order[oid], [])]
+        ob.layer_profile = list(file_profiles.get(order[oid], []))
         for x, y, zz, r, vol in ear_pts.get(order[oid], []):
             # a point belongs to the object (volume -1) or to one of its parts; world = instance @ [part] @ point
             m = mats[int(vol)] if 0 <= vol < len(mats) else m_item

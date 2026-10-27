@@ -102,8 +102,14 @@ def split(o, into="objects"):
     for x, y, r in o.brim_ears:
         k = int(np.argmin([np.hypot(*(np.clip([x, y], b[0][:2], b[1][:2]) - [x, y])) for b in boxes]))
         made[k].brim_ears.append((x, y, r))
-    if any(ob.bbox()[0][2] > o.bbox()[0][2] + 0.05 for ob in made):
+    bottom = o.bbox()[0][2]
+    if any(ob.bbox()[0][2] > bottom + 0.05 for ob in made):
         notes.append("pieces that did not touch the bed now stand on it, as in Bambu Studio")
+    for ob in made:                                  # height bands count from the bottom: kept where it is the same
+        if o.height_ranges and ob.bbox()[0][2] <= bottom + 0.05:
+            ob.height_ranges = [dict(r, settings=dict(r["settings"])) for r in o.height_ranges]
+    if o.height_ranges and any(not ob.height_ranges for ob in made):
+        notes.append("the height ranges were kept only on the pieces standing on the bed")
     return made, notes
 
 
@@ -120,7 +126,10 @@ def merge(objs, name):
     lo, hi = ob.bbox()
     ob.at = (float((lo[0] + hi[0]) / 2), float((lo[1] + hi[1]) / 2))
     ob.brim_ears = ears
+    ob.height_ranges = [dict(r, settings=dict(r["settings"])) for r in objs[0].height_ranges]   # all on the bed
     dropped = sorted({k for o in objs[1:] for k, v in o.settings.items() if objs[0].settings.get(k) != v})
+    if any(o.height_ranges != objs[0].height_ranges for o in objs[1:]):
+        dropped.append("height_ranges")
     return ob, dropped
 
 

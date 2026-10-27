@@ -134,15 +134,30 @@ def version():
     return None
 
 
-def is_running():
+_CLI_FLAGS = ("--slice", "--outputdir", "--export-3mf", "--export-slicedata")
+
+
+def instances():
+    """Running Bambu Studio processes: [(pid, True if it is a command-line run, e.g. a slicing)]."""
     try:
         if SYSTEM == "Windows":
             out = subprocess.run(["tasklist"], capture_output=True, text=True, timeout=10).stdout
-            return "bambu-studio.exe" in out.lower()
-        out = subprocess.run(["pgrep", "-f", "BambuStudio|bambu-studio"], capture_output=True, text=True, timeout=10)
-        return bool(out.stdout.strip())
+            return [(0, False)] if "bambu-studio.exe" in out.lower() else []
+        out = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True, timeout=10).stdout
     except (OSError, subprocess.SubprocessError):
-        return False
+        return []
+    found = []
+    for line in out.splitlines():
+        pid, _, cmd = line.strip().partition(" ")
+        prog = cmd.split(" --", 1)[0]
+        if prog.endswith(("Contents/MacOS/BambuStudio", "bambu-studio", "BambuStudio.AppImage")):
+            found.append((int(pid), any(f in cmd for f in _CLI_FLAGS)))
+    return found
+
+
+def is_running():
+    """Is the Bambu Studio app open (a window, not a command-line slicing)?"""
+    return any(not cli for _, cli in instances())
 
 
 def open_in_gui(path):
@@ -150,10 +165,10 @@ def open_in_gui(path):
     path = os.path.abspath(path)
     if SYSTEM == "Darwin":
         app = executable()
-        running = subprocess.run(["pgrep", "-f", "Contents/MacOS/BambuStudio"], capture_output=True).returncode == 0
-        if app and not running:
+        if app and not is_running():
             # cold start: run the program with the file, as Bambu Studio does for a new window itself; handing
-            # the file over with `open -a` while the app starts can leave it running without any window
+            # the file over with `open -a` while the app starts can leave it running without any window, and
+            # while a command-line slicing runs macOS would hand it to that one
             subprocess.Popen([app, path], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL, start_new_session=True)
         else:

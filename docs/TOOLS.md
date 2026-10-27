@@ -1,6 +1,6 @@
 # Tools
 
-70 tools, generated from the server code by `scripts/gen_tools_doc.py`.
+74 tools, generated from the server code by `scripts/gen_tools_doc.py`.
 
 ## `bambu_status`
 
@@ -95,6 +95,24 @@ Give a plate a name (shown in Bambu Studio).
 |---|---|---|
 | `plate` | integer | required |
 | `name` | string | required |
+
+## `set_plate_settings`
+
+Settings of one plate, like Bambu Studio's plate settings; they win over the project's on that plate.
+bed_type: Cool Plate, Engineering Plate, High Temp Plate, Textured PEI Plate or Supertack Plate.
+print_sequence: 'by layer', or 'by object' (each object printed to the end before the next).
+first_layer_filaments: order of the filament slots on the first layer, e.g. [2, 1].
+spiral_vase: 'on' or 'off'. prime_tower: [x, y] in mm, where its corner goes (e.g. between objects).
+'global' (or [] for the lists) goes back to the project's choice; empty leaves it as it is.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `plate` | integer | required |
+| `bed_type` | string | `''` |
+| `print_sequence` | string | `''` |
+| `first_layer_filaments` | array / null | `None` |
+| `spiral_vase` | string | `''` |
+| `prime_tower` | array / null | `None` |
 
 ## `remove_plate`
 
@@ -831,6 +849,50 @@ Remove an object's brim ears; its brim goes back to the project's brim type.
 | Parameter | Type | Default |
 |---|---|---|
 | `object` | string | required |
+
+## `set_height_range`
+
+Settings for a height band of an object, like Bambu Studio's Height range modifier. Heights are mm from the
+object's bottom. E.g. z_from=0, z_to=5, settings={"sparse_infill_density": "100%"}; {"layer_height": "0.12"}
+for finer layers there (variable layer height); {"filament": 2} to print that band with another filament slot
+(a color band). A band with the same z_from and z_to is updated (null removes a key); bands cannot overlap.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `object` | string | required |
+| `z_from` | number | required |
+| `z_to` | number | required |
+| `settings` | object | required |
+
+## `remove_height_range`
+
+Remove the height band of an object that starts at z_from (mm), or all its bands (z_from=-1).
+
+| Parameter | Type | Default |
+|---|---|---|
+| `object` | string | required |
+| `z_from` | number | `-1` |
+
+## `paint_object`
+
+Paint a region of an object, like Bambu Studio's painting tools. paint: 'color' (with filament=N),
+'support' (supports there), 'block_support' (none there), 'seam' (put the seam there), 'block_seam',
+'fuzzy_skin'. Region: the height band z_from..z_to (mm from the object's bottom; z_to=0 = to the top) and the
+faces looking 'top', 'bottom', 'sides', 'front', 'back', 'left', 'right', 'overhangs' (leaning more than `angle`
+degrees from vertical, for supports) or 'all'. clear=True removes that painting there. Triangles crossing a
+band's edge are split, so the edge is sharp. part: only that part. Look at preview_plate (colors) afterwards.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `object` | string | required |
+| `paint` | string | required |
+| `filament` | integer | `0` |
+| `z_from` | number | `0` |
+| `z_to` | number | `0` |
+| `facing` | string | `'all'` |
+| `angle` | number | `45.0` |
+| `clear` | boolean | `False` |
+| `part` | string | `''` |
 
 ## `make_max_flow_test`
 

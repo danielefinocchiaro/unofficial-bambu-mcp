@@ -6,13 +6,65 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import zipfile
 
 from . import studio, threemf
 
+STALL_S = 90.0        # Bambu Studio is closed when it uses no CPU for this long: it hangs on some inputs
+
 
 class SliceError(RuntimeError):
     pass
+
+
+def _cpu_seconds(pid):
+    """CPU time a process has used so far (s), or None where `ps` cannot tell."""
+    if os.name == "nt":
+        return None
+    try:
+        out = subprocess.run(["ps", "-o", "time=", "-p", str(pid)], capture_output=True, text=True,
+                             timeout=5).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if not out:
+        return None
+    days, _, clock = out.rpartition("-")
+    secs = 0.0
+    try:
+        for x in clock.split(":"):
+            secs = secs * 60 + float(x)
+        return (int(days) if days else 0) * 86400 + secs
+    except ValueError:
+        return None
+
+
+def run(cmd, timeout):
+    """(return code, output) of a Bambu Studio command line. It is stopped, with SliceError, when it runs past
+    `timeout` seconds or uses no CPU for STALL_S: a stuck command-line Bambu Studio also keeps the app from
+    opening files, because macOS takes it for the running app."""
+    with tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace") as log:
+        p = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+        start = idle_since = time.time()
+        last = None
+        try:
+            while p.poll() is None:
+                time.sleep(2)
+                now = time.time()
+                cpu = _cpu_seconds(p.pid)
+                if cpu is None or cpu != last:
+                    last, idle_since = cpu, now
+                if now - start > timeout:
+                    raise SliceError(f"Bambu Studio took more than {timeout / 60:.0f} minutes and was closed")
+                if now - idle_since > STALL_S:
+                    raise SliceError(f"Bambu Studio stopped working on this file (no CPU use for {STALL_S:.0f} s) "
+                                     "and was closed")
+        finally:
+            if p.poll() is None:
+                p.kill()
+                p.wait()
+        log.seek(0)
+        return p.returncode, log.read()
 
 
 def slice_3mf(path, out_path, plate=0, timeout=1800):
@@ -22,16 +74,16 @@ def slice_3mf(path, out_path, plate=0, timeout=1800):
         raise SliceError("Bambu Studio not found (set BAMBU_STUDIO_EXE)")
     work = tempfile.mkdtemp(prefix="ubmcp_")
     try:
-        r = subprocess.run([exe, "--outputdir", work, "--slice", str(plate), "--export-3mf", "sliced.3mf",
-                            os.path.abspath(path)], capture_output=True, text=True, timeout=timeout)
+        code, output = run([exe, "--outputdir", work, "--slice", str(plate), "--export-3mf", "sliced.3mf",
+                            os.path.abspath(path)], timeout)
         res = {}
         rj = os.path.join(work, "result.json")
         if os.path.exists(rj):
             with open(rj, encoding="utf-8") as f:
                 res = json.load(f)
         sliced = os.path.join(work, "sliced.3mf")
-        if r.returncode != 0 or res.get("return_code", 0) != 0 or not os.path.exists(sliced):
-            tail = "\n".join((r.stdout + r.stderr).splitlines()[-15:])
+        if code != 0 or res.get("return_code", 0) != 0 or not os.path.exists(sliced):
+            tail = "\n".join(output.splitlines()[-15:])
             raise SliceError(f"slicing failed: {res.get('error_string', '') or 'see log'}\n{tail}")
         shutil.move(sliced, out_path)
     finally:
@@ -156,11 +208,11 @@ def export_plate(path, plate, out_path, timeout=1800, model_id=None):
         raise SliceError("Bambu Studio not found (set BAMBU_STUDIO_EXE)")
     work = tempfile.mkdtemp(prefix="ubmcp_")
     try:
-        r = subprocess.run([exe, "--outputdir", work, "--slice", str(plate), "--min-save", "--export-3mf",
-                            "plate.gcode.3mf", os.path.abspath(path)], capture_output=True, text=True, timeout=timeout)
+        code, output = run([exe, "--outputdir", work, "--slice", str(plate), "--min-save", "--export-3mf",
+                            "plate.gcode.3mf", os.path.abspath(path)], timeout)
         out = os.path.join(work, "plate.gcode.3mf")
-        if r.returncode != 0 or not os.path.exists(out):
-            tail = "\n".join((r.stdout + r.stderr).splitlines()[-15:])
+        if code != 0 or not os.path.exists(out):
+            tail = "\n".join(output.splitlines()[-15:])
             raise SliceError(f"export failed for plate {plate}\n{tail}")
         if model_id:
             _set_printer_model_id(out, model_id)

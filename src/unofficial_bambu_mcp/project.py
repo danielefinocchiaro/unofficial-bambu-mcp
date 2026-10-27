@@ -33,6 +33,8 @@ class Obj:
         self.name, self.parts, self.at, self.settings = name, parts, tuple(at), settings or {}
         self.uid = None           # stable id, given by Project.objects()
         self.brim_ears = []       # [(x, y, radius)] in the frame of the parts' vertices, on the bed
+        self.height_ranges = []   # [{"from": z, "to": z, "settings": {key: value}}], mm above the object's bottom
+        self.layer_profile = []   # Bambu Studio's variable layer height: [z0, h0, z1, h1, ...], kept from a file
 
     def solid_parts(self):
         return [p for p in self.parts if p.subtype == "normal_part"] or self.parts
@@ -59,6 +61,9 @@ class Obj:
         ears = np.array([[x, y, lo[2]] for x, y, _ in self.brim_ears]) if self.brim_ears else None
         for p in self.parts:
             p.verts = fn(p.verts - c) + c
+        if self.layer_profile and abs(float(np.ptp(np.concatenate([p.verts for p in self.solid_parts()])[:, 2]))
+                                      - float(hi[2] - lo[2])) > 0.01:
+            self.layer_profile = []                  # made for the old height
         if ears is None:
             return False
         moved = fn(ears - c) + c
@@ -387,6 +392,11 @@ class Project:
                     entry["settings"] = o.settings
                 if o.brim_ears:
                     entry["brim_ears"] = len(o.brim_ears)
+                if o.height_ranges:
+                    entry["height_ranges"] = [{"from": r["from"], "to": r["to"], "settings": r["settings"]}
+                                              for r in o.height_ranges]
+                if o.layer_profile:
+                    entry["variable_layer_height"] = True
                 if self.out_of_bed(o):
                     entry["warning"] = "outside the printable area"
                 if any(p.tri_attrs.get("paint_color") for p in o.parts):
@@ -395,6 +405,8 @@ class Project:
             entry = {"plate": pi + 1, "name": pl.name, "objects": objs}
             if pl.tower:
                 entry["prime_tower_xy"] = [round(pl.tower[0], 1), round(pl.tower[1], 1)]
+            if pl.settings:
+                entry["settings"] = dict(pl.settings)
             if pl.layer_gcodes:
                 entry["layer_gcodes"] = [g.as_dict() for g in pl.layer_gcodes]
             out["plates"].append(entry)

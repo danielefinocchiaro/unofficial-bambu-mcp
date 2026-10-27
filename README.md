@@ -40,6 +40,8 @@ are written for the demo ([scripts/make_demo.py](scripts/make_demo.py)).</sub>
 | Modifiers | Box or **round** parts: modifiers with their own settings ("the top 5 mm at 100 % infill"), negative parts (holes for magnets and screws), support blockers and enforcers. |
 | Settings | Read or change any Bambu Studio setting, per filament slot when it applies, with a warning when a value cannot apply (e.g. a textured-plate temperature on a smooth plate). |
 | Presets | Save the project's changes as Bambu Studio **user presets**: filament (`save_filament_preset`), **process** and **printer**; or change one of your presets directly (`edit_preset`), list, rename and delete them, with a backup copy each time. Values are checked and written the way Bambu Studio does (one per nozzle variant where it applies), and changes are stamped for Bambu Studio's cloud sync. Presets that are in your Bambu cloud can only be deleted from Bambu Studio: the answer says how. |
+| Height ranges & plates | `set_height_range`: settings for a band of an object's height, like Bambu Studio's Height range modifier: 100 % infill at the bottom, **finer layers** where the details are (variable layer height), **another filament for a band** (color by height). Variable layer heights and ranges in opened files are kept. `set_plate_settings`: build plate, print sequence (by object), first-layer filament order, spiral vase and prime tower place per plate. |
+| Painting | `paint_object`: colors, supports (or no supports), seams and fuzzy skin on a height band and/or the faces looking one way (top, sides, overhangs...), with sharp edges. Checked on the sliced G-code: a color band changes filament at its edges, painted supports appear where painted. |
 | Purge volumes | `get_purge_volumes` / `set_purge_volumes`: the purge between each pair of slots and the multiplier, as in Bambu Studio's dialog; the values in opened files are kept. |
 | Slicing | Bambu Studio command line: time, grams and **cost** per filament, filament changes, pauses, layers and warnings per plate. Empty plates are skipped. |
 | Previews | Images of a plate (iso or top, zoom, painted colors, **object labels**) and of any **sliced layer**, so the assistant checks its own work. |
@@ -52,7 +54,7 @@ are written for the demo ([scripts/make_demo.py](scripts/make_demo.py)).</sub>
 | Printer status | `printer_status` (read only, local network): state, progress, temperatures, AMS trays with humidity, skipped objects, and warnings (unknown spool being fed, sport speed on a long print, a reading that looks old). |
 | Camera & SD card | `printer_camera`: a picture of the plate right now, so the assistant sees how the print is going. `printer_files` / `download_printer_file`: timelapses (with their last frame) and past print files. `delete_printer_files`: free space on the SD card, only after you confirm the exact list. Works in cloud mode. |
 
-All 70 tools with their parameters: [docs/TOOLS.md](docs/TOOLS.md).
+All 74 tools with their parameters: [docs/TOOLS.md](docs/TOOLS.md).
 
 ## Tested on real hardware
 
