@@ -271,14 +271,13 @@ anywhere. Nothing is sent outside the local network.
   tests.
 - The calibration prints of section 5 and live status during prints.
 
-Windows and Linux paths exist in the code but have not been tested with Bambu Studio.
+On Windows and Linux the whole suite runs in CI with Bambu Studio installed (portable zip, AppImage on Debian 13),
+slicing included; all 14 Bambu printers of Studio 2.8 go from a new project to a print file through the MCP.
 
 ## 8. Limitations
 
-- Single-nozzle printers only. Dual-nozzle machines need settings that are not handled.
-- Variable layer height and height-range modifiers in opened projects are not carried over; the user gets a
-  warning.
-- First-layer tests and cuts do not keep painted colors.
+- On two-nozzle printers each filament's nozzle is chosen automatically; choosing it by hand is not there yet.
+- First-layer tests do not keep painted colors.
 - Bambu Studio re-slices a project when it opens it. To see a plate sliced and ready to print in the app, the print
   file from `send_to_printer` has to be used.
 - The Bambu Connect hand-off is written from Bambu's documentation and has not been tested.

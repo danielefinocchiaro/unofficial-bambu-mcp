@@ -17,8 +17,8 @@ your printer differed from the project's.
 Seen on macOS when the app was started by `open -a … file` while closed. The server now starts the program with the
 file instead. If a window is still missing, quit Bambu Studio (Cmd+Q) and try again.
 
-**Direct printing or skipping objects (`lan-print` branch) is refused with code 84033543.**
-The printer is in cloud mode; see [printing.md](printing.md).
+**`send_to_printer(via='lan')`, `skip_objects` or `ams_load` is refused with code 84033543.**
+The printer is in cloud mode: these need LAN-only mode with Developer Mode; see [printing.md](printing.md).
 
 **`printer_status`: "printer not found on the local network".**
 The printer must be on and on the same network as the computer. Set `BAMBU_PRINTER_IP` if your network blocks

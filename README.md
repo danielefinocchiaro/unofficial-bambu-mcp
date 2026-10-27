@@ -59,9 +59,9 @@ are written for the demo ([scripts/make_demo.py](scripts/make_demo.py)).</sub>
 
 All 87 tools with their parameters: [docs/TOOLS.md](docs/TOOLS.md).
 
-## Tested on real hardware
+## Tested on
 
-macOS, Bambu Studio 2.8.2, a **P1S with two AMS units**, in normal cloud mode:
+**Real hardware**: macOS, Bambu Studio 2.8.2, a **P1S with two AMS units**, in normal cloud mode:
 
 - every tool through a real MCP client, on projects made from scratch and on MakerWorld / Printables downloads
   (painted 6-color models, multi-part assemblies, 3-plate projects, files from Bambu Studio 1.6 and 1.7);
@@ -69,7 +69,17 @@ macOS, Bambu Studio 2.8.2, a **P1S with two AMS units**, in normal cloud mode:
   presets were made and tuned through the server; the print hand-off to Bambu Studio; live status during prints.
 
 The pressure advance tower, the max volumetric speed test and the retraction test are checked by slicing (the G-code
-is inspected) but have not been printed yet. Windows and Linux paths exist but are **not tested**.
+is inspected) but have not been printed yet.
+
+**Windows and Linux**: on every change to `main`, CI installs Bambu Studio 2.8.2 (the portable zip on Windows, the
+AppImage on Debian 13) and runs the whole test suite, slicing and print files included, plus a smoke run. Unit tests
+run on Windows, macOS and Linux with Python 3.10 and 3.13. On Linux the AppImage takes FFmpeg 7 and WebKitGTK 4.1
+from the system (Debian 13, Ubuntu 24.10 or newer); set `BAMBU_STUDIO_EXE` if Bambu Studio is somewhere else.
+
+**Printers**: all 14 Bambu Lab printers of Bambu Studio 2.8 go through the MCP from a new project to a print file
+(A1 mini, A1, A2L, P1P, P1S, P2S, X1, X1 Carbon, X1E, H2S, H2C, H2D, H2D Pro, X2D); only the P1S has printed.
+The Developer Mode tools were checked against a printer in cloud mode (refused, with the right answer) but never
+started a print on one in Developer Mode.
 
 ## Printing and your printer
 
@@ -79,9 +89,9 @@ server:
 
 - **reads** the printer status (allowed in cloud mode), with the LAN access code Bambu Studio already saved;
 - **hands the print over** to Bambu Studio or Bambu Connect, where you press Print;
-- does **not** start prints, set AMS slots or skip objects on its own: you do that in Bambu Studio, Bambu Handy or on
-  the printer. (Direct LAN printing for printers in Developer Mode exists on the `lan-print` branch and is not part
-  of releases yet.)
+- does **not** start prints, set AMS slots or skip objects in cloud mode: you do that in Bambu Studio, Bambu Handy or
+  on the printer. For printers in LAN-only mode with Developer Mode (print farms) it can, always after you confirm
+  with the code it gives (see the Developer Mode row above).
 
 More in [docs/printing.md](docs/printing.md).
 
@@ -151,16 +161,17 @@ flattened the way the app does. Details in [docs/how-it-works.md](docs/how-it-wo
 
 ## Limitations
 
-- Single-nozzle printers; dual-nozzle machines (H2D) need settings that are not handled.
-- Variable layer height and height-range modifiers in opened projects are not carried over (you get a warning).
+- Two-nozzle printers (H2D, H2C, X2D): filaments go to a nozzle automatically, as in Bambu Studio's default;
+  choosing the nozzle of each filament by hand is not there yet.
+- The printer camera works with P1 and A1 printers (X1 and H2 stream over RTSP, not supported yet).
 - First-layer tests do not keep painted colors.
 - Bambu Studio re-slices a project when it opens it; to see a plate sliced and ready to print in the app, use
   `send_to_printer`.
 
 ## Roadmap
 
-- Direct printing for printers in LAN-only + Developer Mode (`lan-print` branch)
-- Windows and Linux testing; a package on PyPI (`uvx unofficial-bambu-mcp`)
+- A package on PyPI (`uvx unofficial-bambu-mcp`)
+- Mesh simplification and repair; the nozzle of each filament on two-nozzle printers; X1/H2 camera
 - A live bridge inside the slicer, to be proposed to OrcaSlicer and Bambu Studio
 
 ## Contributing and support
