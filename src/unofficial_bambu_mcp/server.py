@@ -20,6 +20,7 @@ from . import (
     camera,
     cutting,
     geometry,
+    lan,
     measure,
     meshops,
     orient,
@@ -45,7 +46,8 @@ Coordinates are millimeters on the plate, origin at the front-left corner, objec
 of their footprint and always sit on the bed. Plates and filament slots are numbered from 1.
 Files are never overwritten: saving picks a new name if the file exists. Opened files are read as a copy.
 Always look at preview_plate after changing the layout, and report slicing warnings to the user.
-send_to_printer never starts a print: it opens an official Bambu app where the user presses Print/Send."""
+send_to_printer opens an official Bambu app where the user presses Print/Send. Only with via='lan' (printers in
+Developer Mode) does it start the print itself, after the user confirmed with the code it gives."""
 
 try:
     __version__ = _pkg_version("unofficial-bambu-mcp")
@@ -251,6 +253,7 @@ def set_filament(slot: int, preset: str = "", color: str = "") -> dict:
         pr.filaments[slot - 1] = entry
     else:
         pr.filaments.append(entry)
+    pr.ams_slots.pop(slot, None)
     return {"filaments": pr.summary()["filaments"]}
 
 
@@ -1504,18 +1507,50 @@ def make_first_layer_test(plate: int = 1, height: float = 0.8, objects: list[str
 
 
 @tool()
-def send_to_printer(plate: int = 1, via: str = "auto") -> dict:
-    """Prepare the print file of one plate (.gcode.3mf) and hand it to an official Bambu app, where the user
-    checks printer and AMS mapping and presses Print/Send. Nothing starts printing by itself.
-    via: auto (Bambu Connect if installed, otherwise Bambu Studio) | bambu_connect | bambu_studio | file (only export).
-    Tell the user what to press, and the time, weight and filaments of the plate."""
+def send_to_printer(plate: int = 1, via: str = "auto", ams_slots: list[int] | None = None,
+                    bed_leveling: bool = True, timelapse: bool = False, confirm: str = "") -> dict:
+    """Make the print file of one plate (.gcode.3mf) and send it.
+    via = auto (Bambu Connect if installed, otherwise Bambu Studio) | bambu_connect | bambu_studio: open it in an
+      official Bambu app, where the user checks printer and AMS mapping and presses Print/Send.
+    via = file: only make the file.
+    via = lan: copy it to the printer on the local network and START PRINTING, for printers in LAN-only mode with
+      Developer Mode (print farms; in cloud mode the printer refuses and the answer says so). Two steps: without
+      confirm nothing is sent, the answer gives the AMS slots it would use and a code; check with the user that the
+      plate is clear, then call again with confirm=<code>. AMS slots: from use_ams_filaments, or ams_slots (one AMS
+      slot per project filament slot, 0 = automatic), or the tray with the same type and the closest color.
+    Tell the user the time, weight and filaments of the plate (and for lan, follow it with printer_status)."""
     pr = P()
     pl = pr.plate(plate)
     if not pl.objects:
         raise ValueError(f"plate {plate} is empty")
-    if via not in ("auto", "bambu_connect", "bambu_studio", "file"):
-        raise ValueError("via must be auto, bambu_connect, bambu_studio or file")
+    if via not in ("auto", "lan", "bambu_connect", "bambu_studio", "file"):
+        raise ValueError("via must be auto, lan, bambu_connect, bambu_studio or file")
     used = sorted({f for o in pl.objects for f in o.filaments()})
+    mapping = None
+    if via == "lan":            # check the printer and the AMS before the slow export: what is missing fails fast
+        rep, _ = printer.status(max_age=5)
+        st = printer.summarize(rep)
+        if rep.get("gcode_state") in lan.BUSY:
+            raise ValueError(f"the printer is {st['state']}: wait for the current job to end")
+        trays = st["ams_trays"]
+        chosen = dict(pr.ams_slots)
+        chosen.update({k: a for k, a in enumerate(ams_slots or [], start=1) if a})
+        types = pr.config().get("filament_type") or []
+        fils = [(types[i] if i < len(types) else "PLA", c) for i, (_, c) in enumerate(pr.filaments)]
+        try:
+            if trays:
+                mapping = lan.ams_mapping(fils, used, trays, chosen)
+            elif len(used) > 1:
+                raise ValueError("this plate uses several filaments but the printer has no AMS")
+        except printer.PrinterError as e:
+            raise ValueError(str(e)) from e
+        code = f"print plate {plate}"
+        if confirm.strip() != code:
+            return {"would_print": plate, "printer_state": st["state"],
+                    "ams_slots": {k: mapping[k - 1] + 1 for k in used} if mapping else "external spool",
+                    "bed_leveling": bed_leveling, "timelapse": timelapse, "confirm": code,
+                    "next": "the printer will start by itself: check with the user that the plate is clear and the "
+                            "AMS slots are right, then call again with confirm set to the code above"}
     tmp = next_free_path(os.path.join(out_dir(), f".{pr.name}-export.3mf"))
     # pin the bed type on the plate: Bambu Studio re-applies the user's own bed choice when it opens the file,
     # and a global bed change throws away the slicing of plates without one (no Print button)
@@ -1542,7 +1577,16 @@ def send_to_printer(plate: int = 1, via: str = "auto") -> dict:
     target = via
     if via == "auto":
         target = "bambu_connect" if studio.bambu_connect() else "bambu_studio"
-    if target == "bambu_connect":
+    if target == "lan":
+        if mapping:
+            for f in res["filaments"]:
+                f["ams_slot"] = mapping[f["slot"] - 1] + 1
+        try:
+            res.update(lan.start_print(out, mapping, bed_leveling=bed_leveling, timelapse=timelapse))
+        except printer.PrinterError as e:
+            raise ValueError(str(e)) from e
+        res["next_step"] = "Printing: follow it with printer_status (printer_camera to see the plate)."
+    elif target == "bambu_connect":
         if not studio.bambu_connect():
             raise ValueError("Bambu Connect is not installed (https://wiki.bambulab.com/en/software/bambu-connect); "
                              "use via='bambu_studio'")
@@ -1556,6 +1600,83 @@ def send_to_printer(plate: int = 1, via: str = "auto") -> dict:
         res["next_step"] = "File exported only."
     res["via"] = target
     return res
+
+
+@tool()
+def skip_objects(ids: list[int], confirm: str = "") -> dict:
+    """Stop printing some objects of the print running now, e.g. a part that came off the plate. It CANNOT be undone.
+    ids: the objects' ids as the printer knows them (identify_id; Bambu Handy's skip list, or printer_status
+    'skipped_objects'). Do not list every object: to stop the whole print, cancel it on the printer.
+    First call without confirm: nothing is sent, the answer says what would be skipped and the confirm code; tell
+    the user, and only after they agree call again with confirm=<code>.
+    Bambu firmware accepts it only in LAN-only mode with Developer Mode; otherwise use Bambu Handy or the printer."""
+    ids = sorted({int(i) for i in ids})
+    if not ids:
+        raise ValueError("list the ids of the objects to skip")
+    code = "skip " + ",".join(str(i) for i in ids)
+    if confirm.strip() != code:
+        rep, _ = printer.status(max_age=5)
+        st = printer.summarize(rep)
+        already = sorted({int(x) for x in rep.get("s_obj") or []})
+        res = {"would_skip": [i for i in ids if i not in already], "job": st.get("job"), "state": st.get("state"),
+               "already_skipped": already, "confirm": code,
+               "next": "this cannot be undone: ask the user, then call again with confirm set to the code above"}
+        if not res["would_skip"]:
+            res["next"] = "nothing to do: these objects are already skipped"
+        return res
+    try:
+        res = lan.skip_objects(ids)
+    except printer.PrinterError as e:
+        raise ValueError(str(e)) from e
+    res["next"] = "follow the print with printer_status"
+    return res
+
+
+def _ams_step(slot, confirm, code, label):
+    rep, _ = printer.status(max_age=0)
+    st = printer.summarize(rep)
+    why = lan.check_ams_change(rep, slot)
+    if confirm.strip() != code or why:
+        tray = next((t for t in st.get("ams_trays", []) if t["slot"] == slot), None) if slot else None
+        res = {"would": label, "state": st.get("state"), "loaded_now": lan.loaded_slot(rep)}
+        if tray:
+            res["slot"] = tray
+        if why:
+            res["cannot"] = why
+        else:
+            res.update(confirm=code, next="the nozzle heats up and filament moves: ask the user, then call again "
+                                          "with confirm set to the code above")
+        return res
+    try:
+        res = lan.ams_change(slot)
+    except printer.PrinterError as e:
+        raise ValueError(str(e)) from e
+    res["next"] = "printer_status shows the loaded slot"
+    return res
+
+
+@tool()
+def ams_load(slot: int, confirm: str = "") -> dict:
+    """Load the filament of an AMS slot into the nozzle, like Load in Bambu Studio's Device tab: the nozzle heats,
+    the filament loaded now (if any) goes back to its slot, the new one comes in and is purged. slot: as in
+    printer_status (AMS 1 = slots 1-4, AMS 2 = 5-8). Only when the printer is not printing.
+    First call without confirm: nothing is sent, the answer says what would happen and the confirm code; tell the
+    user, and only after they agree call again with confirm=<code>.
+    Bambu firmware accepts it only in LAN-only mode with Developer Mode; otherwise use the printer screen, Bambu
+    Handy or Bambu Studio."""
+    if slot < 1:
+        raise ValueError("slot is 1-based, as in printer_status")
+    return _ams_step(slot, confirm, f"load {slot}", f"load AMS slot {slot}")
+
+
+@tool()
+def ams_unload(confirm: str = "") -> dict:
+    """Unload the filament in the nozzle back to its AMS slot, like Unload in Bambu Studio's Device tab (the nozzle
+    heats). Only when the printer is not printing. First call without confirm: nothing is sent, the answer gives
+    the confirm code; call again with confirm=<code> only after the user agrees.
+    Bambu firmware accepts it only in LAN-only mode with Developer Mode; otherwise use the printer screen, Bambu
+    Handy or Bambu Studio."""
+    return _ams_step(None, confirm, "unload", "unload the filament in the nozzle")
 
 
 @tool()
@@ -1730,6 +1851,7 @@ def use_ams_filaments(ams_slots: list[int] | None = None) -> dict:
                         "loaded": t.get("name")})
     used = pr.used_filaments()
     pr.filaments = new
+    pr.ams_slots = {m["project_slot"]: m["ams_slot"] for m in mapping}     # send_to_printer(via='lan') prints from these
     res = {"filaments": mapping}
     skipped = [k for k, t in sorted(trays.items()) if t.get("unknown")]
     if skipped and not ams_slots:

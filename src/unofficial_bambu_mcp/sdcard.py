@@ -34,15 +34,27 @@ class _FTPS(ftplib.FTP_TLS):
         conn, size = ftplib.FTP.ntransfercmd(self, cmd, rest)
         return self.context.wrap_socket(conn, server_hostname=self.host, session=self.sock.session), size
 
+    def storbinary(self, cmd, fp, blocksize=65536, callback=None, rest=None):
+        """Upload without the TLS shutdown at the end, which the printer never answers."""
+        self.voidcmd("TYPE I")
+        with self.transfercmd(cmd, rest) as conn:
+            while buf := fp.read(blocksize):
+                conn.sendall(buf)
+        return self.voidresp()
+
+
+def tls_context():
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE                   # the printer uses a self-signed certificate
+    return ctx
+
 
 @contextmanager
 def session(serial=None):
     """A logged-in connection to the printer's SD card."""
     s, code = printer.credentials(serial)
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE                   # the printer uses a self-signed certificate
-    f = _FTPS(context=ctx)
+    f = _FTPS(context=tls_context())
     try:
         f.connect(printer.address(s))
         f.login("bblp", code)
@@ -106,6 +118,13 @@ def download(f, kind, name, dest_dir):
     with open(path, "wb") as out:
         f.retrbinary(f"RETR {FOLDERS[kind]}/{name}", out.write)
     return path
+
+
+def upload(f, path, name):
+    """Copy a local file to the SD card's root as `name` (where the printer prints files from)."""
+    _check_name(name)
+    with open(path, "rb") as fp:
+        f.storbinary(f"STOR {name}", fp)
 
 
 def thumbnail_name(video):

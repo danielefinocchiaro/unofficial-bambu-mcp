@@ -1471,3 +1471,110 @@ def test_footprint_counts_brim_and_ears(tmp_path, monkeypatch):
     s.set_object_setting("b", "brim_type", "")
     s.add_brim_ears("b", points=[[o.at[0] + 10, o.at[1]]], radius=4)
     assert arrange.footprint(o, s.P().config()).bounds[2] == pytest.approx(14, abs=0.05)
+
+
+def test_ams_mapping():
+    from unofficial_bambu_mcp import lan, printer
+    trays = [{"slot": 1, "type": "PETG", "color": "#00AE42"}, {"slot": 2, "unknown": True},
+             {"slot": 5, "type": "PLA", "color": "#FF6A13"}, {"slot": 7, "type": "PLA", "color": "#5E43B7"}]
+    fils = [("PLA", "#FF7020"), ("PLA", "#6040B0"), ("PETG", "#000000")]
+    assert lan.ams_mapping(fils, [1, 2], trays) == [4, 6, -1]          # closest color, unused slot = -1
+    assert lan.ams_mapping(fils, [1, 2], trays, {2: 5}) == [4, 4, -1]   # chosen slot wins
+    with pytest.raises(printer.PrinterError):
+        lan.ams_mapping(fils, [1], trays, {1: 2})                       # spool not set in the AMS
+    with pytest.raises(printer.PrinterError):
+        lan.ams_mapping([("TPU", "#000000")], [1], trays)              # no such filament loaded
+
+
+def test_print_command():
+    from unofficial_bambu_mcp import lan
+    c = lan.print_command("cube-plate1.gcode.3mf", 1, [4, 6])["print"]
+    assert c["command"] == "project_file" and c["param"] == "Metadata/plate_1.gcode"
+    assert c["url"] == "file:///sdcard/cube-plate1.gcode.3mf" and c["subtask_name"] == "cube-plate1"
+    assert c["use_ams"] and c["ams_mapping"] == [4, 6]
+    assert not lan.print_command("x.gcode.3mf", 2)["print"]["use_ams"]
+
+
+def test_print_refusal():
+    from unofficial_bambu_mcp import lan
+    old = {"hms": [{"attr": 0x05000500, "code": 0x00010007, "timestamp": 1}]}
+    assert lan.refusal(old, lan.hms_seen(old)) is None                       # already there before
+    again = {"hms": [{"attr": 0x05000500, "code": 0x00010007, "timestamp": 2}]}
+    assert "Developer Mode" in lan.refusal(again, lan.hms_seen(old))          # raised again: refused
+    assert "verify" in lan.refusal({"command": "project_file", "result": "failed", "reason": "verify failed"})
+    assert lan.refusal({"command": "project_file", "result": "success"}) is None
+    # what a P1S in cloud mode answers: the command echoed back with an error code and no result
+    assert "84033543" in lan.refusal({"command": "project_file", "err_code": 84033543})
+
+
+def test_skip_objects_request_and_refusal():
+    from unofficial_bambu_mcp import lan
+    c = lan.skip_command([670, 648])["print"]
+    assert c["command"] == "skip_objects" and c["obj_list"] == [670, 648] and c["sequence_id"].isdigit()
+    # a P1S in cloud mode answers like for project_file: the command echoed back with an error code
+    assert "84033543" in lan.refusal({"command": "skip_objects", "err_code": 84033543}, command="skip_objects")
+    assert lan.refusal({"command": "skip_objects", "result": "success"}, command="skip_objects") is None
+
+
+# ---------------------------------------------------------------- AMS load / unload (LAN, Developer Mode)
+def _ams_report(state="IDLE", now="1"):
+    tray = [{"id": str(k), "tray_type": "PLA", "nozzle_temp_min": "190", "nozzle_temp_max": "230"} for k in range(3)]
+    tray.append({"id": "3"})                            # empty
+    tray2 = [{"id": "1", "tray_type": "PETG", "nozzle_temp_min": "230", "nozzle_temp_max": "260"}]
+    return {"gcode_state": state, "ams": {"tray_now": now, "tray_exist_bits": "27",
+                                          "ams": [{"id": "0", "tray": tray}, {"id": "1", "tray": tray2}]}}
+
+
+def test_ams_change_commands_as_bambu_studio_sends_them():
+    from unofficial_bambu_mcp import lan
+    load = lan.ams_change_command(_ams_report(), 6)["print"]
+    assert {k: load[k] for k in ("command", "ams_id", "target", "slot_id", "curr_temp", "tar_temp")} == {
+        "command": "ams_change_filament", "ams_id": 1, "target": 5, "slot_id": 1, "curr_temp": 210, "tar_temp": 245}
+    unload = lan.ams_change_command(_ams_report(now="5"), None)["print"]
+    assert (unload["target"], unload["slot_id"], unload["ams_id"]) == (255, 255, 1)
+
+
+def test_ams_change_refused_when_it_makes_no_sense():
+    from unofficial_bambu_mcp import lan
+    assert "not printing" in lan.check_ams_change(_ams_report(state="RUNNING"), 3)
+    assert lan.check_ams_change(_ams_report(), 4) == "AMS slot 4 is empty"
+    assert lan.check_ams_change(_ams_report(), 2) == "AMS slot 2 is already loaded"
+    assert lan.check_ams_change(_ams_report(now="255"), None) == "no filament is loaded in the nozzle"
+    assert lan.check_ams_change(_ams_report(), 3) is None
+
+
+def test_ams_load_asks_before_sending(monkeypatch):
+    from unofficial_bambu_mcp import lan, printer
+    from unofficial_bambu_mcp import server as s
+    monkeypatch.setattr(printer, "status", lambda max_age=20.0: (_ams_report(), "SERIAL0001"))
+    sent = []
+    monkeypatch.setattr(lan, "ams_change", lambda slot=None: sent.append(slot) or {"done": "load"})
+    first = s.ams_load(3)
+    assert first["confirm"] == "load 3" and not sent
+    assert s.ams_load(3, confirm="load 2")["confirm"] == "load 3" and not sent    # a wrong code sends nothing
+    assert s.ams_load(3, confirm="load 3")["done"] == "load" and sent == [3]
+    assert "cannot" in s.ams_load(2) and "confirm" not in s.ams_load(2)          # already loaded
+
+
+@needs_bambu
+def test_lan_print_asks_before_starting(tmp_path, monkeypatch):
+    """send_to_printer(via='lan') first only says what it would do; nothing is exported or sent without the code."""
+    from unofficial_bambu_mcp import lan, printer, slicer
+    from unofficial_bambu_mcp import server as s
+    monkeypatch.setenv("UBMCP_DIR", str(tmp_path))
+    rep = _ams_report()
+    monkeypatch.setattr(printer, "status", lambda serial=None, max_age=20.0: (rep, "SERIAL0001"))
+    calls = []
+    monkeypatch.setattr(slicer, "export_plate", lambda *a, **k: calls.append("export") or {})
+    monkeypatch.setattr(lan, "start_print", lambda *a, **k: calls.append("print") or {"started": True})
+    s.new_project("lan", "P1S", filaments=[{"preset": "Bambu PLA Basic", "color": "#FFFFFF"}])
+    s.add_shape("box", width=20, depth=20, height=5, name="cube")
+    first = s.send_to_printer(1, via="lan")
+    assert first["confirm"] == "print plate 1" and first["ams_slots"] == {1: 1} and calls == []
+    s.send_to_printer(1, via="lan", confirm="print plate 1")
+    assert calls == ["export", "print"]
+    rep["gcode_state"] = "RUNNING"
+    from mcp.server.mcpserver.exceptions import ToolError
+    with pytest.raises(ToolError, match="printing"):
+        s.send_to_printer(1, via="lan")
+

@@ -121,6 +121,7 @@ class Project:
         self.overrides = {}
         self.flush_set = {}       # {(from slot, to slot): (mm³, from color, to color)}: purge volumes set by hand
         self.flush_multiplier = None
+        self.ams_slots = {}       # project filament slot -> AMS slot (1-based), from use_ams_filaments
         self.last_uid = 0         # highest object id given so far (ids are never reused)
         self.plates = [Plate("Plate 1")]
         self.extras = {}          # files carried over from an opened 3MF (e.g. custom G-code per layer)
