@@ -35,6 +35,7 @@ class Obj:
         self.brim_ears = []       # [(x, y, radius)] in the frame of the parts' vertices, on the bed
         self.height_ranges = []   # [{"from": z, "to": z, "settings": {key: value}}], mm above the object's bottom
         self.layer_profile = []   # Bambu Studio's variable layer height: [z0, h0, z1, h1, ...], kept from a file
+        self.printable = True     # False: stays on the plate but is not printed
 
     def solid_parts(self):
         return [p for p in self.parts if p.subtype == "normal_part"] or self.parts
@@ -397,6 +398,8 @@ class Project:
                                               for r in o.height_ranges]
                 if o.layer_profile:
                     entry["variable_layer_height"] = True
+                if not o.printable:
+                    entry["printable"] = False
                 if self.out_of_bed(o):
                     entry["warning"] = "outside the printable area"
                 if any(p.tri_attrs.get("paint_color") for p in o.parts):

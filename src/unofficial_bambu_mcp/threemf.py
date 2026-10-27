@@ -117,7 +117,8 @@ def write(project, path, title=None):
                 if ob.layer_profile:
                     profiles.append((n_file, ob.layer_profile))
                 build.append(f'  <item objectid="{oid}" p:UUID="{uid()}" '
-                             f'transform="1 0 0 0 1 0 0 0 1 {pos[0]:.4f} {pos[1]:.4f} {pos[2]:.4f}" printable="1"/>\n')
+                             f'transform="1 0 0 0 1 0 0 0 1 {pos[0]:.4f} {pos[1]:.4f} {pos[2]:.4f}" '
+                             f'printable="{1 if ob.printable else 0}"/>\n')
                 conf.append(f'  <object id="{oid}">\n    <metadata key="name" value={quoteattr(ob.name)}/>\n'
                             f'    <metadata key="extruder" value="{ob.solid_parts()[0].filament}"/>\n')
                 conf += [f'    <metadata key={quoteattr(k)} value={quoteattr(str(v))}/>\n' for k, v in ob.settings.items()]
@@ -522,7 +523,7 @@ def read(path):
             w = m @ np.array([x, y, zz, 1.0])
             ob.brim_ears.append((float(w[0]), float(w[1]), float(r)))
         if printable == "0":
-            warnings.append(f"'{name}' was marked not printable")
+            ob.printable = False
 
     proj.plates = []
     placed = set()

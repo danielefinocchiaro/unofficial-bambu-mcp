@@ -1,6 +1,7 @@
 """Unit tests. The ones that need Bambu Studio profiles are skipped when it is not installed."""
 
 import math
+import os
 
 import numpy as np
 import pytest
@@ -781,6 +782,61 @@ def test_height_ranges_plate_settings_and_painting(tmp_path, monkeypatch):
     assert o.layer_profile                                                    # same height: kept
     s.transform_object("cube", scale=2)
     assert o.layer_profile == []                                              # made for the old height
+
+
+@needs_bambu
+def test_small_object_tools(tmp_path, monkeypatch):
+    import zipfile
+
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    from unofficial_bambu_mcp import server as s
+    monkeypatch.setenv("UBMCP_DIR", str(tmp_path))
+    s.new_project("small", "P1S")
+    s.add_shape("box", width=20, depth=20, height=10, name="a", x=50, y=60)
+    s.add_shape("box", width=30, depth=10, height=10, name="b", x=120, y=90)
+    s.add_shape("cylinder", diameter=15, height=10, name="c", x=200, y=40)
+    s.align_objects(["a", "b", "c"], align="front")
+    s.align_objects(["a", "b", "c"], distribute="x")
+    pr = s.P()
+    assert [pr.find(n)[1].footprint()[1] for n in "abc"] == [32.5, 32.5, 32.5]          # same front edge
+    xs = sorted(pr.find(n)[1].footprint() for n in "abc")
+    assert abs((xs[1][0] - xs[0][2]) - (xs[2][0] - xs[1][2])) < 1e-6                   # equal gaps
+    # not printable: kept in the file, left out of the print
+    s.set_object_printable("b", False)
+    with zipfile.ZipFile(s.save_project()["saved"]) as z:
+        assert z.read("3D/3dmodel.model").decode().count('printable="0"') == 1
+    s.open_project(s.S.saved)
+    assert next(o for pl in s.get_project()["plates"] for o in pl["objects"] if o["name"] == "b")["printable"] is False
+    s.set_object_setting("a", "wall_loops", "4")
+    s.set_object_setting("a", "sparse_infill_density", "40%")
+    assert s.copy_object_settings("a", ["c"], keys=["wall_loops"])["settings"] == {"wall_loops": "4"}
+    assert s.P().find("c")[1].settings == {"wall_loops": "4"}
+    with pytest.raises(ToolError, match="no settings of its own"):
+        s.copy_object_settings("b", ["c"])
+    # STL out, one per object (centered) or all as placed
+    files = s.export_stl()["files"]
+    assert len(files) == 3 and all(os.path.exists(f["file"]) for f in files)
+    v, t = geometry.load_stl(files[0]["file"])
+    assert abs(v[:, 2].min()) < 1e-6 and np.allclose((v.min(0)[:2] + v.max(0)[:2]) / 2, 0, atol=1e-4)
+    one = s.export_stl(plate=1, one_file=True)["files"][0]["file"]
+    assert len(geometry.load_stl(one)[1]) == sum(len(geometry.load_stl(f["file"])[1]) for f in files)
+    # inches, and a new shape for a part
+    geometry.save_stl(str(tmp_path / "inch.stl"), *geometry.box(1, 2, 0.5))
+    hint = s.import_model(str(tmp_path / "inch.stl"))[0]["hint"]
+    assert "convert_units" in hint
+    assert s.convert_units("inch", "inch")["size_mm"] == [25.4, 50.8, 12.7]
+    assert s.convert_units("inch", "inch", restore=True)["size_mm"] == [1.0, 2.0, 0.5]
+    at = s.P().find("a")[1].at
+    geometry.save_stl(str(tmp_path / "new.stl"), *geometry.cylinder(25, 12))
+    r = s.replace_with_stl("a", str(tmp_path / "new.stl"))
+    assert r["new_size_mm"] == [25.0, 25.0, 12.0] and s.P().find("a")[1].at == at
+    # part types
+    s.merge_objects(["b", "c"], name="bc")
+    assert s.set_part_type("bc", "c", "negative")["now"] == "negative_part"
+    with pytest.raises(ToolError, match="only printed part"):
+        s.set_part_type("bc", "b", "modifier")
+    assert s.set_part_type("bc", "c", "part")["now"] == "normal_part"
 
 
 def _cube_xml(oid, size):

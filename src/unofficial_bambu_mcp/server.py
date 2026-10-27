@@ -392,7 +392,12 @@ def import_model(path: str, plate: int = 1, x: float | None = None, y: float | N
             o.transform(lambda v: geometry.scale(v, scale))
         if rotate_z:
             o.transform(lambda v: geometry.rotate(v, rotate_z))
-        out.append(_place(pr, plate, o, x if len(objs) == 1 else None, y if len(objs) == 1 else None))
+        res = _place(pr, plate, o, x if len(objs) == 1 else None, y if len(objs) == 1 else None)
+        big = float(max(o.size()))
+        if big < 3:
+            res["hint"] = (f"only {big:.2f} mm across: if it was modeled in inches, cm or meters, "
+                           "convert_units(object, 'inch' / 'cm' / 'meter')")
+        out.append(res)
     return out
 
 
@@ -545,6 +550,252 @@ def fill_plate(object: str, copies: int = 0, gap: float = 6.0, rotate: bool = Fa
         res["note"] = f"only {len(made)} of the {copies} copies fit"
     if rotate:
         res["rotated"] = sum(1 for s in spots if s[2])
+    return res
+
+
+UNITS = {"inch": 25.4, "inches": 25.4, "in": 25.4, "cm": 10.0, "centimeter": 10.0, "centimeters": 10.0,
+         "meter": 1000.0, "meters": 1000.0, "metre": 1000.0, "metres": 1000.0, "m": 1000.0}
+
+
+@tool()
+def convert_units(object: str, unit: str = "inch", restore: bool = False) -> dict:
+    """An object modeled in other units, like Bambu Studio's Convert from inch / meter: unit 'inch', 'cm' or
+    'meter' scales it up from that unit to millimeters (a 1-unit cube becomes 25.4, 10 or 1000 mm);
+    restore=True scales it back down. import_model says when a model looks like it is in inches or meters."""
+    pr = P(True)
+    _, o = pr.find(object)
+    f = UNITS.get(unit.strip().lower())
+    if not f:
+        raise ValueError("unit must be inch, cm or meter")
+    dropped = o.transform(lambda v: geometry.scale(v, 1 / f if restore else f))
+    res = {"name": o.name, "scaled_by": round(1 / f if restore else f, 6), "size_mm": [round(float(v), 2) for v in o.size()]}
+    if dropped:
+        res["note"] = _EARS_GONE
+    if pr.out_of_bed(o):
+        res["warning"] = "now (partly) outside the printable area: move_object or arrange"
+    return res
+
+
+@tool()
+def set_object_printable(object: str, printable: bool = True) -> dict:
+    """Keep an object on the plate but leave it out of the print (printable=False), like unticking Printable in
+    Bambu Studio; True puts it back. The other objects slice and print as usual."""
+    pr = P(True)
+    _, o = pr.find(object)
+    o.printable = bool(printable)
+    return {"name": o.name, "printable": o.printable}
+
+
+@tool()
+def copy_object_settings(from_object: str, to_objects: list[str], keys: list[str] | None = None,
+                         height_ranges: bool = False, replace: bool = False) -> dict:
+    """Copy one object's own settings (set_object_setting: infill, walls, brim...) to other objects, like Bambu
+    Studio's Copy / Paste process settings. keys: only these; replace=True first removes the targets' own
+    settings; height_ranges=True copies the height bands too."""
+    pr = P(True)
+    _, src = pr.find(from_object)
+    chosen = {k: v for k, v in src.settings.items() if not keys or k in keys}
+    if keys:
+        missing = [k for k in keys if k not in src.settings]
+        if missing:
+            raise ValueError(f"'{src.name}' has no setting of its own named {missing}: it has {sorted(src.settings)}")
+    if not chosen and not (height_ranges and src.height_ranges):
+        raise ValueError(f"'{src.name}' has no settings of its own to copy (see set_object_setting)")
+    out = []
+    for ref in to_objects:
+        _, o = pr.find(ref)
+        if o is src:
+            continue
+        if replace:
+            o.settings = {}
+        o.settings.update(chosen)
+        if height_ranges:
+            o.height_ranges = [dict(r, settings=dict(r["settings"])) for r in src.height_ranges]
+        out.append(o.name)
+    return {"from": src.name, "to": out, "settings": chosen,
+            **({"height_ranges": len(src.height_ranges)} if height_ranges else {})}
+
+
+ALIGN = ("left", "right", "center_x", "front", "back", "center_y")
+
+
+@tool()
+def align_objects(objects: list[str], align: str = "", distribute: str = "") -> dict:
+    """Line up objects of one plate, like Bambu Studio's Align / Distribute, by their outer boxes.
+    align: left, right, center_x (along X); front, back, center_y (along Y). distribute: 'x' or 'y' spaces them
+    evenly between the two outermost ones. Both can be given."""
+    pr = P(True)
+    if len(objects or []) < 2:
+        raise ValueError("give at least two objects")
+    found = [pr.find(r) for r in objects]
+    if len({pi for pi, _ in found}) > 1:
+        raise ValueError("the objects are on different plates")
+    objs = list({id(o): o for _, o in found}.values())
+    if align and align not in ALIGN:
+        raise ValueError(f"align must be one of {', '.join(ALIGN)}")
+    if distribute and distribute not in ("x", "y"):
+        raise ValueError("distribute must be 'x' or 'y'")
+    if not align and not distribute:
+        raise ValueError("say how: align and/or distribute")
+    boxes = {id(o): o.footprint() for o in objs}
+    if align:
+        k = 0 if align in ("left", "right", "center_x") else 1
+        lows = [boxes[id(o)][k] for o in objs]
+        highs = [boxes[id(o)][k + 2] for o in objs]
+        for o in objs:
+            lo, hi = boxes[id(o)][k], boxes[id(o)][k + 2]
+            if align in ("left", "front"):
+                shift = min(lows) - lo
+            elif align in ("right", "back"):
+                shift = max(highs) - hi
+            else:
+                shift = (min(lows) + max(highs)) / 2 - (lo + hi) / 2
+            at = list(o.at)
+            at[k] += shift
+            o.at = (float(at[0]), float(at[1]))
+    if distribute:
+        k = 0 if distribute == "x" else 1
+        boxes = {id(o): o.footprint() for o in objs}
+        order = sorted(objs, key=lambda o: boxes[id(o)][k])
+        span = boxes[id(order[-1])][k + 2] - boxes[id(order[0])][k]
+        sizes = sum(boxes[id(o)][k + 2] - boxes[id(o)][k] for o in order)
+        gap = (span - sizes) / (len(order) - 1)
+        edge = boxes[id(order[0])][k]
+        for o in order:
+            lo, hi = boxes[id(o)][k], boxes[id(o)][k + 2]
+            at = list(o.at)
+            at[k] += edge - lo
+            o.at = (float(at[0]), float(at[1]))
+            edge += hi - lo + gap
+    res = {"objects": [{"name": o.name, "center_xy": [round(float(o.at[0]), 1), round(float(o.at[1]), 1)]} for o in objs]}
+    if distribute and gap < 0:
+        res["warning"] = "they do not fit between the outermost two: they overlap (arrange, or move one further out)"
+    else:
+        rects = [o.footprint() for o in objs]
+        if any(a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+               for i, a in enumerate(rects) for b in rects[i + 1:]):
+            res["warning"] = "some objects now overlap: look at preview_plate"
+    if any(pr.out_of_bed(o) for o in objs):
+        res.setdefault("warning", "an object is (partly) outside the printable area")
+    return res
+
+
+def _object_mesh(o):
+    """One mesh of what an object prints, where it is on the plate: its solid parts minus its negative parts."""
+    off = meshops.offset(o)
+    solids = [geometry.to_manifold(p.verts + off, p.tris) for p in o.parts if p.subtype == "normal_part"]
+    holes = [geometry.to_manifold(p.verts + off, p.tris) for p in o.parts if p.subtype == "negative_part"]
+    ok = all(m.status() == geometry.m3.Error.NoError for m in solids + holes)
+    if ok:
+        m = geometry.m3.Manifold.batch_boolean(solids, geometry.m3.OpType.Add) if len(solids) > 1 else solids[0]
+        for h in holes:
+            m = m - h
+        return geometry.from_manifold(m), bool(holes)
+    vs, ts, n = [], [], 0                             # not closed solids: the parts as they are
+    for p in o.parts:
+        if p.subtype == "normal_part":
+            vs.append(p.verts + off)
+            ts.append(p.tris + n)
+            n += len(p.verts)
+    return (np.vstack(vs), np.vstack(ts)), False
+
+
+def _file_name(s):
+    return "".join(c if c.isalnum() or c in " -_." else "_" for c in s).strip() or "object"
+
+
+@tool()
+def export_stl(objects: list[str] | None = None, plate: int = 0, one_file: bool = False) -> dict:
+    """Save objects as STL files (e.g. to print them on other printers of a farm, or to share them): the named
+    objects, all of a plate, or all of the project. One file per object, or one_file=True for all of them where
+    they are on the plate. Negative parts (holes) are cut out; colors and settings are not part of an STL."""
+    pr = P()
+    if objects:
+        objs = [pr.find(r)[1] for r in objects]
+    elif plate:
+        objs = list(pr.plate(plate).objects)
+    else:
+        objs = [o for _, o in pr.objects()]
+    if not objs:
+        raise ValueError("no objects to export")
+    folder = os.path.join(out_dir(), "stl")
+    os.makedirs(folder, exist_ok=True)
+    meshes = [(o, *_object_mesh(o)) for o in objs]
+    files = []
+    if one_file:
+        vs, ts, n = [], [], 0
+        for _, (v, t), _ in meshes:
+            vs.append(v)
+            ts.append(t + n)
+            n += len(v)
+        path = next_free_path(os.path.join(folder, _file_name(pr.name) + (f" plate {plate}" if plate else "") + ".stl"))
+        geometry.save_stl(path, np.vstack(vs), np.vstack(ts))
+        files.append({"file": path, "objects": len(objs)})
+    else:
+        for o, (v, t), _ in meshes:
+            path = next_free_path(os.path.join(folder, _file_name(o.name) + ".stl"))
+            v = v - [*(v.min(0)[:2] + v.max(0)[:2]) / 2, v.min(0)[2]]       # centered, on z = 0
+            geometry.save_stl(path, v, t)
+            files.append({"file": path, "object": o.name, "triangles": int(len(t))})
+    res = {"files": files}
+    if any(cut for _, _, cut in meshes):
+        res["note"] = "negative parts were cut out of the objects"
+    return res
+
+
+def _load_mesh(path):
+    path = os.path.abspath(os.path.expanduser(path))
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".stl":
+        return geometry.load_stl(path)
+    if ext == ".obj":
+        return geometry.load_obj(path)
+    if ext == ".3mf":
+        src = threemf.read(path)
+        parts = [p for _, o in src.objects() for p in o.solid_parts() if p.subtype == "normal_part"]
+        if len(parts) != 1:
+            raise ValueError(f"{os.path.basename(path)} has {len(parts)} solid parts: use an STL or a 3MF with one part")
+        return parts[0].verts, parts[0].tris
+    raise ValueError("the file must be .stl, .obj or .3mf")
+
+
+@tool()
+def replace_with_stl(object: str, path: str, part: str = "") -> dict:
+    """Swap the shape of an object (or of its part `part`) for the one in an STL/OBJ/3MF file, like Bambu
+    Studio's Replace with STL, e.g. after fixing it in CAD. Name, filament, settings, place on the plate and the
+    other parts stay; the new shape takes the old one's center, standing on the same bottom. Painting on the old
+    shape is dropped (it was for other triangles)."""
+    pr = P(True)
+    _, o = pr.find(object)
+    solids = [p for p in o.parts if p.subtype == "normal_part"]
+    if part:
+        hits = [p for p in o.parts if p.name.lower() == part.lower()]
+        if not hits:
+            raise ValueError(f"'{o.name}' has no part named '{part}': {[p.name for p in o.parts]}")
+        target = hits[0]
+    elif len(solids) == 1:
+        target = solids[0]
+    else:
+        raise ValueError(f"'{o.name}' has {len(solids)} solid parts: say which one with part= {[p.name for p in solids]}")
+    v, t = _load_mesh(path)
+    off = meshops.offset(o)
+    old_lo, old_hi = target.verts.min(0), target.verts.max(0)
+    lo, hi = v.min(0), v.max(0)
+    shift = np.array([(old_lo[0] + old_hi[0] - lo[0] - hi[0]) / 2, (old_lo[1] + old_hi[1] - lo[1] - hi[1]) / 2,
+                      old_lo[2] - lo[2]])
+    old_size = old_hi - old_lo
+    target.verts, target.tris = np.asarray(v, float) + shift, np.asarray(t, np.int64)
+    painted = bool(target.tri_attrs)
+    target.tri_attrs = {}
+    blo, bhi = o.bbox()
+    c = (blo + bhi) / 2
+    o.at = (float(c[0] + off[0]), float(c[1] + off[1]))
+    res = {"name": o.name, "part": target.name, "old_size_mm": [round(float(x), 2) for x in old_size],
+           "new_size_mm": [round(float(x), 2) for x in hi - lo], "check": geometry.check(target.verts, target.tris)}
+    if painted:
+        res["note"] = "the old painting was dropped"
+    if pr.out_of_bed(o):
+        res["warning"] = "now (partly) outside the printable area: move_object or arrange"
     return res
 
 
@@ -1895,6 +2146,33 @@ def cut_object(object: str, z: float = 0, keep: str = "both", normal: list[float
 # ---------------------------------------------------------------- modifiers
 SUBTYPES = {"modifier": "modifier_part", "negative": "negative_part", "support_blocker": "support_blocker",
             "support_enforcer": "support_enforcer"}
+
+
+@tool()
+def set_part_type(object: str, part: str, type: str) -> dict:
+    """Change what a part of an object is, like Bambu Studio's Change type: 'part' (printed), 'modifier' (its
+    settings apply inside it), 'negative' (cut out, a hole), 'support_blocker' or 'support_enforcer'. An object
+    keeps at least one printed part."""
+    pr = P(True)
+    _, o = pr.find(object)
+    hits = [p for p in o.parts if p.name.lower() == part.lower()]
+    if not hits:
+        raise ValueError(f"'{o.name}' has no part named '{part}': {[p.name for p in o.parts]}")
+    sub = "normal_part" if type == "part" else SUBTYPES.get(type)
+    if not sub:
+        raise ValueError(f"type must be part, {', '.join(SUBTYPES)}")
+    p = hits[0]
+    if p.subtype == "normal_part" and sub != "normal_part" and \
+            sum(q.subtype == "normal_part" for q in o.parts) == 1:
+        raise ValueError(f"'{p.name}' is the only printed part of '{o.name}': it must stay a part")
+    before = p.subtype
+    off = meshops.offset(o)
+    p.subtype = sub
+    lo, hi = o.bbox()                                 # the printed parts decide where the object is
+    c = (lo + hi) / 2
+    o.at = (float(c[0] + off[0]), float(c[1] + off[1]))
+    return {"name": o.name, "part": p.name, "was": before, "now": sub,
+            "parts": [{"name": q.name, "type": q.subtype} for q in o.parts]}
 
 
 @tool()
