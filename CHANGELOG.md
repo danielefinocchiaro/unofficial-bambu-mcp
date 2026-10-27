@@ -57,6 +57,10 @@ Added
 - `paint_object`: color, support, block support, seam, block seam and fuzzy skin painting on a height band and/or
   faces looking one way (top, bottom, sides, front, back, left, right, overhangs); triangles crossing a band edge are
   split so the edge is sharp. Fuzzy skin painting in opened files is kept (it was dropped).
+- `export_stl`, `replace_with_stl`, `align_objects`, `convert_units`, `set_object_printable`, `set_part_type`,
+  `copy_object_settings`: the small object tools of Bambu Studio's menus.
+- `measure_object` / `measure_between`: sizes, cross-sections (length, width, thickest point, holes), clearances
+  between the pieces of print-in-place models, walls thinner than the line width, gaps between objects or parts.
 - `printer_camera`: a picture from the camera (P1/A1, port 6000), in cloud mode too.
 - `printer_files`, `download_printer_file` (a timelapse comes with its last frame) and `delete_printer_files` (by name
   or age, two steps with a code tied to the exact files, refused during a print): the SD card over FTPS.

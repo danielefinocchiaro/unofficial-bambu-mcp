@@ -839,6 +839,34 @@ def test_small_object_tools(tmp_path, monkeypatch):
     assert s.set_part_type("bc", "c", "part")["now"] == "normal_part"
 
 
+@needs_bambu
+def test_measure_object_and_between(tmp_path, monkeypatch):
+    from unofficial_bambu_mcp import server as s
+    from unofficial_bambu_mcp.project import Obj, Part
+    monkeypatch.setenv("UBMCP_DIR", str(tmp_path))
+    s.new_project("measure", "P1S")
+    m = geometry.to_manifold(*geometry.box(40, 20, 10))
+    m = m + geometry.to_manifold(*geometry.box(0.3, 15, 8)).translate((-10, 0, 10))     # a fin too thin to print
+    m = m + geometry.to_manifold(*geometry.box(0.8, 15, 8)).translate((0, 0, 10))       # a fin that prints
+    m = m - geometry.to_manifold(*geometry.cylinder(6, 30)).translate((12, 0, -5))      # a 6 mm hole
+    m = m + geometry.to_manifold(*geometry.box(5, 20, 4)).translate((22.8, 0, 0))       # a block 0.3 mm away
+    v, t = geometry.from_manifold(m)
+    s.P().plates[0].objects.append(Obj("piece", [Part("piece", v, t)], at=(100.0, 100.0)))
+    r = s.measure_object("piece", z=5)
+    assert r["pieces"] == 2 and abs(r["smallest_gaps"][0]["gap_mm"] - 0.3) < 0.01
+    spots = r["thin_walls"]["where"]
+    assert len(spots) == 1 and abs(spots[0]["about_mm"] - 0.3) < 0.05 and spots[0]["z_from"] > 10
+    big = r["section"]["islands"][0]
+    assert big["length_mm"] == 40.0 and big["width_mm"] == 20.0 and big["holes"][0]["round_diameter_mm"] == 6.0
+    fin = s.measure_object("piece", z=14)["section"]["islands"]
+    assert sorted(round(i["width_mm"], 2) for i in fin) == [0.3, 0.8]                      # how thick each fin is
+    s.add_shape("box", width=10, depth=10, height=10, name="cube", x=140, y=100)
+    b = s.measure_between("piece", "cube")
+    assert abs(b["gap_mm"] - b["box_gap_xyz"][0]) < 0.01 and b["gap_mm"] > 5 and "overlap_mm3" not in b
+    s.add_shape("box", width=10, depth=10, height=10, name="inside", x=100, y=100)
+    assert s.measure_between("piece", "inside")["overlap_mm3"] > 900
+
+
 def _cube_xml(oid, size):
     s = size
     vs = [(0, 0, 0), (s, 0, 0), (s, s, 0), (0, s, 0), (0, 0, s), (s, 0, s), (s, s, s), (0, s, s)]

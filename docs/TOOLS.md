@@ -1,6 +1,6 @@
 # Tools
 
-74 tools, generated from the server code by `scripts/gen_tools_doc.py`.
+83 tools, generated from the server code by `scripts/gen_tools_doc.py`.
 
 ## `bambu_status`
 
@@ -219,6 +219,79 @@ copies (more fit), unless keep_original=True; the other objects on the plate sta
 | `rotation_step` | number | `90.0` |
 | `keep_original` | boolean | `False` |
 
+## `convert_units`
+
+An object modeled in other units, like Bambu Studio's Convert from inch / meter: unit 'inch', 'cm' or
+'meter' scales it up from that unit to millimeters (a 1-unit cube becomes 25.4, 10 or 1000 mm);
+restore=True scales it back down. import_model says when a model looks like it is in inches or meters.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `object` | string | required |
+| `unit` | string | `'inch'` |
+| `restore` | boolean | `False` |
+
+## `set_object_printable`
+
+Keep an object on the plate but leave it out of the print (printable=False), like unticking Printable in
+Bambu Studio; True puts it back. The other objects slice and print as usual.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `object` | string | required |
+| `printable` | boolean | `True` |
+
+## `copy_object_settings`
+
+Copy one object's own settings (set_object_setting: infill, walls, brim...) to other objects, like Bambu
+Studio's Copy / Paste process settings. keys: only these; replace=True first removes the targets' own
+settings; height_ranges=True copies the height bands too.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `from_object` | string | required |
+| `to_objects` | array | required |
+| `keys` | array / null | `None` |
+| `height_ranges` | boolean | `False` |
+| `replace` | boolean | `False` |
+
+## `align_objects`
+
+Line up objects of one plate, like Bambu Studio's Align / Distribute, by their outer boxes.
+align: left, right, center_x (along X); front, back, center_y (along Y). distribute: 'x' or 'y' spaces them
+evenly between the two outermost ones. Both can be given.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `objects` | array | required |
+| `align` | string | `''` |
+| `distribute` | string | `''` |
+
+## `export_stl`
+
+Save objects as STL files (e.g. to print them on other printers of a farm, or to share them): the named
+objects, all of a plate, or all of the project. One file per object, or one_file=True for all of them where
+they are on the plate. Negative parts (holes) are cut out; colors and settings are not part of an STL.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `objects` | array / null | `None` |
+| `plate` | integer | `0` |
+| `one_file` | boolean | `False` |
+
+## `replace_with_stl`
+
+Swap the shape of an object (or of its part `part`) for the one in an STL/OBJ/3MF file, like Bambu
+Studio's Replace with STL, e.g. after fixing it in CAD. Name, filament, settings, place on the plate and the
+other parts stay; the new shape takes the old one's center, standing on the same bottom. Painting on the old
+shape is dropped (it was for other triangles).
+
+| Parameter | Type | Default |
+|---|---|---|
+| `object` | string | required |
+| `path` | string | required |
+| `part` | string | `''` |
+
 ## `delete_object`
 
 Remove an object from the project.
@@ -255,6 +328,35 @@ Is the mesh a closed, printable solid? Size, volume, number of separate pieces.
 | Parameter | Type | Default |
 |---|---|---|
 | `object` | string | required |
+
+## `measure_object`
+
+Measure an object (or its part `part`), in plate mm: size and where it is, each part's size, volume and
+surface, the area standing on the bed, the smallest gaps between its separate pieces or parts (the clearance of
+print-in-place joints, with where), and walls thinner than the nozzle's line width (or min_wall mm), with
+where and at which heights. z >= 0: also the cross-section at that height above the bed, every island with
+its length, width and thickest point and its holes (how long and thick a bar is, how wide a hole is).
+
+| Parameter | Type | Default |
+|---|---|---|
+| `object` | string | required |
+| `z` | number | `-1` |
+| `part` | string | `''` |
+| `min_wall` | number | `0` |
+
+## `measure_between`
+
+Distance between two objects or two parts (part_a / part_b; the same object twice with two parts measures
+the clearance between them), in plate mm: the smallest gap with about where it is, the distance between their
+centers, the gap along each axis between their outer boxes (negative = they overlap along it) and, if they
+overlap, the volume they share.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `object_a` | string | required |
+| `object_b` | string | required |
+| `part_a` | string | `''` |
+| `part_b` | string | `''` |
 
 ## `arrange`
 
@@ -791,6 +893,18 @@ Modifiers, negative parts and painted colors are kept on the pieces.
 | `count` | integer | `0` |
 | `positions` | array / null | `None` |
 | `clearance` | number | `0.2` |
+
+## `set_part_type`
+
+Change what a part of an object is, like Bambu Studio's Change type: 'part' (printed), 'modifier' (its
+settings apply inside it), 'negative' (cut out, a hole), 'support_blocker' or 'support_enforcer'. An object
+keeps at least one printed part.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `object` | string | required |
+| `part` | string | required |
+| `type` | string | required |
 
 ## `add_modifier`
 

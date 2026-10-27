@@ -20,6 +20,7 @@ from . import (
     camera,
     cutting,
     geometry,
+    measure,
     meshops,
     orient,
     paint,
@@ -843,6 +844,124 @@ def check_object(object: str) -> dict:
     """Is the mesh a closed, printable solid? Size, volume, number of separate pieces."""
     _, o = P().find(object)
     return {"name": o.name, "parts": [{"name": p.name, **geometry.check(p.verts, p.tris)} for p in o.parts]}
+
+
+def _line_width(pr):
+    cfg = pr.config()
+    nozzle = float((cfg.get("nozzle_diameter") or ["0.4"])[0])
+    lw = str(cfg.get("outer_wall_line_width") or nozzle)
+    return float(lw[:-1]) / 100 * nozzle if lw.endswith("%") else float(lw)
+
+
+def _r(v, nd=2):
+    return [round(float(x), nd) for x in v]
+
+
+def _solids(pr, o, part):
+    """[(name, manifold in plate mm, part)] of an object's solid parts (or the one named), and the parts that are
+    not closed solids."""
+    off = meshops.offset(o)
+    parts = [p for p in o.parts if p.subtype == "normal_part" and (not part or p.name.lower() == part.lower())]
+    if not parts:
+        raise ValueError(f"'{o.name}' has no solid part named '{part}': {[p.name for p in o.parts]}")
+    good, bad = [], []
+    for p in parts:
+        m = measure.solid(p, off)
+        (good if m is not None else bad).append((p.name, m, p) if m is not None else p.name)
+    return good, bad, off
+
+
+@tool()
+def measure_object(object: str, z: float = -1, part: str = "", min_wall: float = 0) -> dict:
+    """Measure an object (or its part `part`), in plate mm: size and where it is, each part's size, volume and
+    surface, the area standing on the bed, the smallest gaps between its separate pieces or parts (the clearance of
+    print-in-place joints, with where), and walls thinner than the nozzle's line width (or min_wall mm), with
+    where and at which heights. z >= 0: also the cross-section at that height above the bed, every island with
+    its length, width and thickest point and its holes (how long and thick a bar is, how wide a hole is)."""
+    pr = P()
+    _, o = pr.find(object)
+    good, bad, off = _solids(pr, o, part)
+    parts = [p for _, _, p in good] + [p for p in o.parts if p.name in bad]
+    allv = np.concatenate([p.verts for p in parts]) + off
+    lo, hi = allv.min(0), allv.max(0)
+    res = {"name": o.name, "size_mm": _r(hi - lo), "from_xyz": _r(lo), "to_xyz": _r(hi),
+           "parts": [{"name": n, "size_mm": _r(np.ptp(p.verts, axis=0)), "volume_mm3": round(m.volume(), 1),
+                      "surface_mm2": round(m.surface_area(), 1)} for n, m, p in good]}
+    ms = [measure.light(m) for _, m, _ in good]
+    if bad:
+        res["not_closed"] = bad
+    if not ms:
+        res["note"] = "no closed solid to measure further: check_object tells why"
+        return res
+    res["on_bed_mm2"] = round(sum(g.area for g in measure.section(ms, float(lo[2]) + 0.05)), 1)
+    pieces = []
+    for (n, _, _), m in zip(good, ms, strict=True):
+        bits = m.decompose()
+        pieces += [(n if len(bits) == 1 else f"{n} #{k + 1}", b) for k, b in enumerate(bits)]
+    if 1 < len(pieces) <= measure.MAX_PIECES:
+        gaps = measure.gaps_between(pieces)
+        if gaps:
+            out = []
+            by = dict(pieces)
+            for g, a, b in gaps[:5]:
+                _, pa, pb = measure.closest_points(by[a].to_mesh().vert_properties[:, :3],
+                                                   by[b].to_mesh().vert_properties[:, :3], reach=g + 0.5)
+                out.append({"between": [a, b], "gap_mm": round(g, 2), "near_xyz": _r((pa + pb) / 2, 1)})
+            res["smallest_gaps"] = out
+        else:
+            res["smallest_gaps"] = f"no two pieces closer than {measure.GAP_SEARCH:g} mm"
+        res["pieces"] = len(pieces)
+    elif len(pieces) > measure.MAX_PIECES:
+        res["pieces"] = len(pieces)
+        res["note"] = f"more than {measure.MAX_PIECES} separate pieces: gaps between them not measured"
+    w = min_wall or _line_width(pr)
+    thinnest, spots = measure.scan_thin(ms, float(lo[2]), float(hi[2]), w, 0.0, 0.0)
+    res["thin_walls"] = ({"thinner_than_mm": round(w, 2), "thinnest_about_mm": thinnest, "where": spots[:10]}
+                         if spots else f"none thinner than {w:.2f} mm (the line width)")
+    if z >= 0:
+        if not lo[2] <= z <= hi[2]:
+            raise ValueError(f"z must be between {lo[2]:.2f} and {hi[2]:.2f} mm")
+        islands = sorted(measure.section(ms, float(z)), key=lambda g: -g.area)
+        res["section"] = {"z": z, "islands": [measure.describe(g, 0.0, 0.0) for g in islands]}
+    return res
+
+
+@tool()
+def measure_between(object_a: str, object_b: str, part_a: str = "", part_b: str = "") -> dict:
+    """Distance between two objects or two parts (part_a / part_b; the same object twice with two parts measures
+    the clearance between them), in plate mm: the smallest gap with about where it is, the distance between their
+    centers, the gap along each axis between their outer boxes (negative = they overlap along it) and, if they
+    overlap, the volume they share."""
+    pr = P()
+    _, oa = pr.find(object_a)
+    _, ob = pr.find(object_b)
+    ga, _, _ = _solids(pr, oa, part_a)
+    gb, _, _ = _solids(pr, ob, part_b)
+    if not ga or not gb:
+        raise ValueError("both need a closed solid part (see check_object)")
+    if oa is ob and not (part_a and part_b):
+        raise ValueError("the same object twice: give part_a and part_b")
+    ma = measure.light(ga[0][1] if len(ga) == 1 else
+                       geometry.m3.Manifold.batch_boolean([m for _, m, _ in ga], geometry.m3.OpType.Add))
+    mb = measure.light(gb[0][1] if len(gb) == 1 else
+                       geometry.m3.Manifold.batch_boolean([m for _, m, _ in gb], geometry.m3.OpType.Add))
+    va, vb = ma.to_mesh().vert_properties[:, :3], mb.to_mesh().vert_properties[:, :3]
+    la, ha, lb, hb = va.min(0), va.max(0), vb.min(0), vb.max(0)
+    shared = (ma ^ mb).volume()
+    upper, pa, pb = measure.closest_points(va, vb, limit=3000)        # vertices: at least this close
+    if shared > 1e-6:
+        gap = 0.0
+    else:
+        gap = float(ma.min_gap(mb, upper + 0.01))
+        _, pa, pb = measure.closest_points(va, vb, reach=gap + 0.5)
+    ca, cb = (la + ha) / 2, (lb + hb) / 2
+    res = {"a": oa.name + (f" / {part_a}" if part_a else ""), "b": ob.name + (f" / {part_b}" if part_b else ""),
+           "gap_mm": round(gap, 3), "near_xyz": {"a": _r(pa, 1), "b": _r(pb, 1)},
+           "centers_mm": round(float(np.linalg.norm(cb - ca)), 2), "centers_dxyz": _r(cb - ca),
+           "box_gap_xyz": _r(np.maximum(lb - ha, la - hb))}
+    if shared > 1e-6:
+        res["overlap_mm3"] = round(shared, 2)
+    return res
 
 
 @tool()

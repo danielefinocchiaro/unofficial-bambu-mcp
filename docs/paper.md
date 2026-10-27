@@ -257,7 +257,7 @@ anywhere. Nothing is sent outside the local network.
 
 ## 7. Testing
 
-- 73 unit tests run in CI on Linux, without Bambu Studio (the tests that need it are skipped there).
+- 75 unit tests run in CI on Linux, without Bambu Studio (the tests that need it are skipped there).
 - Smoke tests run on a machine with Bambu Studio: they build projects, open real files, slice, render previews and
   build the calibration plates, and write everything to a folder so it can be looked at.
 - Three scripts go through a real MCP client over stdio, as an assistant does: a quick check, one against a live
