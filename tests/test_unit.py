@@ -724,14 +724,15 @@ def test_slicer_closes_a_stuck_bambu_studio(monkeypatch):
     import time
 
     from unofficial_bambu_mcp import slicer
-    if slicer._cpu_seconds(1) is None:
-        pytest.skip("ps cannot tell CPU time here")
+    if slicer._cpu_seconds(os.getpid()) is None:
+        pytest.skip("CPU time cannot be read here")
+    import sys
     monkeypatch.setattr(slicer, "STALL_S", 4)
     t = time.time()
     with pytest.raises(slicer.SliceError, match="no CPU use"):
-        slicer.run(["sleep", "60"], timeout=60)
-    assert time.time() - t < 20
-    assert slicer.run(["echo", "ok"], timeout=30) == (0, "ok\n")
+        slicer.run([sys.executable, "-c", "import time; time.sleep(60)"], timeout=60)
+    assert time.time() - t < 25
+    assert slicer.run([sys.executable, "-c", "print('ok')"], timeout=30) == (0, "ok\n")
 
 
 @needs_bambu

@@ -4,7 +4,7 @@ name: with-bambu-studio
 on:
   workflow_dispatch:
   push:
-    branches: [main, features]
+    branches: [main]
 env:
   STUDIO_TAG: v02.08.02.61
   STUDIO_BUILD: "20260820225108"

@@ -18,10 +18,29 @@ class SliceError(RuntimeError):
     pass
 
 
-def _cpu_seconds(pid):
-    """CPU time a process has used so far (s), or None where `ps` cannot tell."""
-    if os.name == "nt":
+def _cpu_seconds_windows(pid):
+    import ctypes
+    from ctypes import wintypes
+    k32 = ctypes.windll.kernel32
+    h = k32.OpenProcess(0x1000, False, pid)            # PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
         return None
+    try:
+        times = [wintypes.FILETIME() for _ in range(4)]   # creation, exit, kernel, user
+        if not k32.GetProcessTimes(h, *(ctypes.byref(t) for t in times)):
+            return None
+        return sum((t.dwHighDateTime << 32 | t.dwLowDateTime) / 1e7 for t in times[2:])
+    finally:
+        k32.CloseHandle(h)
+
+
+def _cpu_seconds(pid):
+    """CPU time a process has used so far (s), or None when it cannot be read."""
+    if os.name == "nt":
+        try:
+            return _cpu_seconds_windows(pid)
+        except (OSError, AttributeError):
+            return None
     try:
         out = subprocess.run(["ps", "-o", "time=", "-p", str(pid)], capture_output=True, text=True,
                              timeout=5).stdout.strip()
