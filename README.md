@@ -104,13 +104,17 @@ git clone https://github.com/danielefinocchiaro/unofficial-bambu-mcp
 cd unofficial-bambu-mcp && uv sync
 ```
 
+It is a standard MCP server (stdio), so any MCP client that runs local servers can use it. It was developed and
+tested with Claude Code; the other clients below take the same command in their own config file.
+
 **Claude Code**
 
 ```bash
 claude mcp add bambu -- uv run --directory /path/to/unofficial-bambu-mcp unofficial-bambu-mcp
 ```
 
-**Claude Desktop or other MCP clients** (`claude_desktop_config.json`):
+**Claude Desktop** (`claude_desktop_config.json`), **Cursor** (`~/.cursor/mcp.json`), **Windsurf**
+(`~/.codeium/windsurf/mcp_config.json`), **Gemini CLI** (`~/.gemini/settings.json`):
 
 ```json
 {
@@ -122,6 +126,23 @@ claude mcp add bambu -- uv run --directory /path/to/unofficial-bambu-mcp unoffic
   }
 }
 ```
+
+**OpenAI Codex CLI** (`~/.codex/config.toml`):
+
+```toml
+[mcp_servers.bambu]
+command = "uv"
+args = ["run", "--directory", "/path/to/unofficial-bambu-mcp", "unofficial-bambu-mcp"]
+```
+
+**VS Code** (GitHub Copilot agent mode, `.vscode/mcp.json`):
+
+```json
+{ "servers": { "bambu": { "type": "stdio", "command": "uv",
+  "args": ["run", "--directory", "/path/to/unofficial-bambu-mcp", "unofficial-bambu-mcp"] } } }
+```
+
+The ChatGPT app only connects to remote MCP servers, and this one has to run on the computer with Bambu Studio.
 
 Then ask: *"What version of Bambu Studio do I have, and which printers can you use?"*
 
