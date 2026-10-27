@@ -282,9 +282,13 @@ def text_solid(s, height=10.0, depth=2.0, font=None, base=0.0, margin=3.0, spaci
 def text_parts(s, height=10.0, depth=2.0, font=None, base=1.0, margin=3.0, spacing=0.0):
     """Raised text on a rounded plate as two separate solids, so each can get its own filament:
     [("Base", verts, tris), ("Text", verts, tris)]; the letters stand on top of the plate."""
-    shape = text_outline(s, height, font, spacing)
+    return shape_parts(text_outline(s, height, font, spacing), depth, base, margin, "Text")
+
+
+def shape_parts(shape, depth=2.0, base=1.0, margin=3.0, label="Logo"):
+    """A flat shape raised on a rounded plate, as two solids: [("Base", ...), (label, ...)]."""
     plate = shape.envelope.buffer(margin, join_style=1)
-    return [("Base", *extrude(plate, base)), ("Text", *extrude(shape, depth, base))]
+    return [("Base", *extrude(plate, base)), (label, *extrude(shape, depth, base))]
 
 
 def crop_height(verts, tris, z_max):

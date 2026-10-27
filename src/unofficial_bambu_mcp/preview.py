@@ -104,6 +104,31 @@ def _occlusion(zbuf, W, H, px_per_mm):
     return (1 - 0.6 * near / k).reshape(-1)
 
 
+def _carved(ob):
+    """The printed parts of an object with its negative parts (holes, engravings) cut out, painting kept; the parts
+    as they are when that is not possible."""
+    from . import geometry, paint
+    from .project import Part
+    solids = [p for p in ob.parts if p.subtype == "normal_part"]
+    holes = [p for p in ob.parts if p.subtype == "negative_part"]
+    if not holes:
+        return solids
+    try:
+        cut = geometry.m3.Manifold.batch_boolean([geometry.to_manifold(h.verts, h.tris) for h in holes],
+                                                 geometry.m3.OpType.Add)
+        out = []
+        for p in solids:
+            m, oid = paint.tracked(p.verts, p.tris)
+            if m.status() != geometry.m3.Error.NoError:
+                out.append(p)
+                continue
+            v, t, attrs = paint.carry(m - cut, oid, p.verts, p.tris, p.tri_attrs)
+            out.append(Part(p.name, v, t, p.filament, p.subtype, tri_attrs=attrs))
+        return out
+    except Exception:  # noqa: BLE001 - a preview never fails because of a hole
+        return solids
+
+
 def render_plate(project, plate_index, view="iso", size=900, label=True, zoom=False, object_labels=False):
     """PNG bytes of one plate (0-based index) with its objects in their filament colors.
     zoom: frame the objects instead of the whole bed. object_labels: write each object's id and name on it."""
@@ -117,9 +142,7 @@ def render_plate(project, plate_index, view="iso", size=900, label=True, zoom=Fa
         c = (lo + hi) / 2
         off = np.array([ob.at[0] - c[0], ob.at[1] - c[1], -lo[2]])
         max_h = max(max_h, hi[2] - lo[2])
-        for p in ob.parts:
-            if p.subtype != "normal_part":
-                continue
+        for p in _carved(ob):
             v = p.verts + off
             tri = v[p.tris]
             base = colors[(p.filament - 1) % len(colors)] if colors else np.array([200, 200, 200.0])

@@ -867,6 +867,58 @@ def test_measure_object_and_between(tmp_path, monkeypatch):
     assert s.measure_between("piece", "inside")["overlap_mm3"] > 900
 
 
+def test_svg_shapes(tmp_path):
+    import math
+
+    from unofficial_bambu_mcp import svg
+    f = tmp_path / "t.svg"
+    f.write_text('''<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="50mm" viewBox="0 0 200 100">
+      <g transform="translate(10 10) scale(2)">
+        <rect x="0" y="0" width="10" height="20"/>
+        <circle cx="40" cy="10" r="10"/>
+        <path d="M 60 0 h 20 v 20 h -20 Z M 65 5 h 10 v 10 h -10 Z" fill-rule="evenodd"/>
+        <path d="M 0 30 A 5 5 0 0 0 10 30 Z" fill="none" stroke="#000" stroke-width="1"/>
+      </g>
+      <rect x="0" y="0" width="5" height="5" style="display:none"/>
+    </svg>''')
+    shape, (w, h) = svg.load(str(f))
+    # user unit = 0.5 mm and the group scales by 2: 1 mm per unit. Rect 10 x 20, circle r 10, a 20 mm square with
+    # a 10 mm hole, and the stroke (1 mm wide) of a half circle of radius 5
+    stroke, rect, square, circle = sorted(getattr(shape, "geoms", [shape]), key=lambda g: g.area)
+    assert abs(rect.area - 200) < 0.5 and abs(circle.area - math.pi * 100) < 2
+    assert abs(square.area - 300) < 0.5 and len(square.interiors) == 1
+    assert abs(stroke.area - (math.pi * 5 + 10)) < 2                     # half circle + its diameter, 1 mm wide
+    assert abs(w - 80.5) < 0.1 and abs(np.mean(shape.bounds[::2])) < 1e-6
+
+
+@needs_bambu
+def test_relief_on_flat_and_curved_faces(tmp_path, monkeypatch):
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    from unofficial_bambu_mcp import server as s
+    monkeypatch.setenv("UBMCP_DIR", str(tmp_path))
+    s.new_project("relief", "P1S", filaments=[{"preset": "Bambu PLA Basic", "color": "#FFFFFF"},
+                                             {"preset": "Bambu PLA Basic", "color": "#D02020"}])
+    s.add_shape("box", width=60, depth=30, height=10, name="tag", x=70, y=70)
+    r = s.add_relief("tag", text="HI", size=10, depth=1.0, filament=2)
+    o = s.P().find("tag")[1]
+    text = o.parts[-1]
+    assert r["type"] == "raised" and text.filament == 2 and r["surface_relief_mm"] == 0
+    assert geometry.check(text.verts, text.tris)["manifold"]
+    assert abs(text.verts[:, 2].max() - (o.parts[0].verts[:, 2].max() + 1.0)) < 1e-3      # 1 mm above the top
+    s.add_shape("cylinder", diameter=40, height=30, name="cup", x=180, y=70)
+    r = s.add_relief("cup", text="TEA", face="front", size=8, depth=0.8, engrave=True)
+    cut = s.P().find("cup")[1].parts[-1]
+    assert cut.subtype == "negative_part" and r["surface_relief_mm"] > 2                  # it followed the curve
+    assert geometry.check(cut.verts, cut.tris)["manifold"]
+    with pytest.raises(ToolError, match="does not reach"):
+        s.add_relief("tag", text="TOO LONG FOR IT", size=10, depth=1.0)
+    f = tmp_path / "logo.svg"
+    f.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5"/></svg>')
+    r = s.add_shape("svg", svg=str(f), size=30, height=1.5, base=2, filament=2, base_filament=1)
+    assert r["size_mm"][2] == 3.5 and [p.name for p in s.P().find(r["name"])[1].parts] == ["Base", "Logo"]
+
+
 def _cube_xml(oid, size):
     s = size
     vs = [(0, 0, 0), (s, 0, 0), (s, s, 0), (0, s, 0), (0, 0, s), (s, 0, s), (s, s, s), (0, s, s)]

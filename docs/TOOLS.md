@@ -1,6 +1,6 @@
 # Tools
 
-83 tools, generated from the server code by `scripts/gen_tools_doc.py`.
+84 tools, generated from the server code by `scripts/gen_tools_doc.py`.
 
 ## `bambu_status`
 
@@ -139,12 +139,37 @@ From a 3MF every object is imported (with its parts and filament assignments).
 | `filament` | integer | `1` |
 | `name` | string | `''` |
 
+## `add_relief`
+
+Text or an SVG logo on a face of an object, raised or engraved, like Bambu Studio's Text and SVG tools. It
+follows the surface, curved faces too. face: top, bottom, front, back, left, right (the side it is read from);
+at: [x, y, z] plate point to center it on (default: the middle of that face); size: capital letter height for
+text, longest side for an SVG (mm); depth: how far it stands out or goes in; rotate: degrees within the face.
+Raised, it is a new part (filament=N prints it in another color); engraved, a negative part (set_part_type
+turns it back). Look at preview_plate afterwards.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `object` | string | required |
+| `text` | string | `''` |
+| `svg` | string | `''` |
+| `face` | string | `'top'` |
+| `at` | array / null | `None` |
+| `size` | number | `10` |
+| `depth` | number | `1.0` |
+| `engrave` | boolean | `False` |
+| `filament` | integer | `0` |
+| `rotate` | number | `0` |
+| `font` | string | `''` |
+
 ## `add_shape`
 
 Create a simple solid: box (width, depth, height), cylinder (diameter, height), cone (diameter,
 diameter_top, height), sphere (diameter), text (text, text_height = capital letters in mm, height = depth
 of the letters; base > 0 puts the text on a plate that thick, as a separate part 'Base' with filament
-base_filament (0 = same as the text), e.g. white letters on a black tag; font = path to a .ttf/.otf).
+base_filament (0 = same as the text), e.g. white letters on a black tag; font = path to a .ttf/.otf),
+svg (svg = path of an .svg file, a logo raised `height` mm; size = its longest side in mm, 0 = the file's
+own size; base works as for text). To put text or a logo on an existing object, use add_relief.
 
 | Parameter | Type | Default |
 |---|---|---|
@@ -164,6 +189,8 @@ base_filament (0 = same as the text), e.g. white letters on a black tag; font = 
 | `font` | string | `''` |
 | `base` | number | `0` |
 | `base_filament` | integer | `0` |
+| `svg` | string | `''` |
+| `size` | number | `0` |
 
 ## `move_object`
 

@@ -28,9 +28,11 @@ from . import (
     presets,
     preview,
     printer,
+    relief,
     sdcard,
     slicer,
     studio,
+    svg,
     threemf,
     user_presets,
 )
@@ -402,20 +404,104 @@ def import_model(path: str, plate: int = 1, x: float | None = None, y: float | N
     return out
 
 
+def _svg_shape(path, size):
+    """(shape in mm scaled so its longest side is `size` (0 = as in the file), (width, height))."""
+    from shapely import affinity
+    shape, (w, h) = svg.load(os.path.abspath(os.path.expanduser(path)))
+    if size > 0:
+        k = size / max(w, h)
+        shape, w, h = affinity.scale(shape, k, k, origin=(0, 0)), w * k, h * k
+    return shape, (w, h)
+
+
+@tool()
+def add_relief(object: str, text: str = "", svg: str = "", face: str = "top", at: list[float] | None = None,
+               size: float = 10, depth: float = 1.0, engrave: bool = False, filament: int = 0, rotate: float = 0,
+               font: str = "") -> dict:
+    """Text or an SVG logo on a face of an object, raised or engraved, like Bambu Studio's Text and SVG tools. It
+    follows the surface, curved faces too. face: top, bottom, front, back, left, right (the side it is read from);
+    at: [x, y, z] plate point to center it on (default: the middle of that face); size: capital letter height for
+    text, longest side for an SVG (mm); depth: how far it stands out or goes in; rotate: degrees within the face.
+    Raised, it is a new part (filament=N prints it in another color); engraved, a negative part (set_part_type
+    turns it back). Look at preview_plate afterwards."""
+    pr = P(True)
+    _, o = pr.find(object)
+    if bool(text) == bool(svg):
+        raise ValueError("give text or svg (one of them)")
+    if not 0 < depth <= 20:
+        raise ValueError("depth must be between 0 and 20 mm")
+    fil = filament or o.solid_parts()[0].filament
+    if not 1 <= fil <= len(pr.filaments):
+        raise ValueError(f"filament must be a slot 1..{len(pr.filaments)}")
+    if text:
+        shape = geometry.text_outline(text, size, font or None)
+    else:
+        shape, _ = _svg_shape(svg, size)
+    solids = [p for p in o.parts if p.subtype == "normal_part"]
+    verts = np.concatenate([p.verts for p in solids])
+    base = np.cumsum([0] + [len(p.verts) for p in solids[:-1]])
+    tris = np.concatenate([p.tris + b for p, b in zip(solids, base, strict=True)])
+    off = meshops.offset(o)
+    U, V, _ = relief.frame(face)
+    if at:
+        if len(at) != 3:
+            raise ValueError("at is [x, y, z] in plate mm")
+        p = np.asarray(at, float) - off
+    else:
+        lo, hi = o.bbox()
+        p = (lo + hi) / 2
+    v, t, info = relief.build(verts, tris, shape, face, (float(p @ U), float(p @ V)), depth, engrave, rotate)
+    label = (f"Text {text[:20]}" if text else f"Logo {os.path.splitext(os.path.basename(svg))[0]}")
+    used = o.filaments()
+    part = Part(label, v, t, fil, "negative_part" if engrave else "normal_part")
+    o.parts.append(part)
+    lo, hi = o.bbox()
+    c = (lo + hi) / 2
+    o.at = (float(c[0] + off[0]), float(c[1] + off[1]))
+    res = {"name": o.name, "part": part.name, "type": "engraved (negative part)" if engrave else "raised",
+           "face": face, "size_mm": _r(np.ptp(v, axis=0)), **info}
+    notes = []
+    if not engrave and face not in ("top",):
+        notes.append("raised on a side or bottom face: the undersides of the letters print as small overhangs, "
+                     "keep it shallow (about 1 mm) or engrave instead")
+    if not engrave and fil not in used and len(used) == 1:
+        notes.append(f"printed with filament {fil}: the object now has two colors, a prime tower is added")
+    if info["surface_relief_mm"] > 0.05:
+        notes.append(f"the surface under it is curved ({info['surface_relief_mm']} mm of height difference): "
+                     "the shape follows it")
+    if notes:
+        res["notes"] = notes
+    return res
+
+
 @tool()
 def add_shape(shape: str, plate: int = 1, x: float | None = None, y: float | None = None, filament: int = 1,
               name: str = "", width: float = 20, depth: float = 20, height: float = 20, diameter: float = 20,
               diameter_top: float = 0, text: str = "", text_height: float = 10, font: str = "",
-              base: float = 0, base_filament: int = 0) -> dict:
+              base: float = 0, base_filament: int = 0, svg: str = "", size: float = 0) -> dict:
     """Create a simple solid: box (width, depth, height), cylinder (diameter, height), cone (diameter,
     diameter_top, height), sphere (diameter), text (text, text_height = capital letters in mm, height = depth
     of the letters; base > 0 puts the text on a plate that thick, as a separate part 'Base' with filament
-    base_filament (0 = same as the text), e.g. white letters on a black tag; font = path to a .ttf/.otf)."""
+    base_filament (0 = same as the text), e.g. white letters on a black tag; font = path to a .ttf/.otf),
+    svg (svg = path of an .svg file, a logo raised `height` mm; size = its longest side in mm, 0 = the file's
+    own size; base works as for text). To put text or a logo on an existing object, use add_relief."""
     pr = P(True)
     for f in (filament, base_filament or filament):
         if not 1 <= f <= len(pr.filaments):
             raise ValueError(f"filament slot must be 1..{len(pr.filaments)} (add slots with set_filament)")
     shape = shape.lower().strip()
+    if shape == "svg":
+        if not svg:
+            raise ValueError("give the .svg file: svg='/path/logo.svg'")
+        outline, _ = _svg_shape(svg, size)          # `svg` here is the file path
+        nm = pr.unique_name(name or os.path.splitext(os.path.basename(svg))[0])
+        if base > 0:
+            parts = [Part(pn, v, t, (base_filament or filament) if pn == "Base" else filament)
+                     for pn, v, t in geometry.shape_parts(outline, height, base, label="Logo")]
+        else:
+            v, t = geometry.extrude(outline, height)
+            parts = [Part(nm, v, t, filament)]
+        return _place(pr, plate, Obj(nm, parts), x, y)
     if shape == "text" and base > 0:
         if not text:
             raise ValueError("text is empty")
