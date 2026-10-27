@@ -59,7 +59,7 @@ def _index():
     idx = {}
     for kind in KINDS:
         for root in studio.profile_roots():
-            for p in glob.glob(os.path.join(root, kind, "*.json")):
+            for p in glob.glob(os.path.join(root, kind, "**", "*.json"), recursive=True):   # filament/P1P/...
                 name = os.path.splitext(os.path.basename(p))[0]
                 idx.setdefault((kind, name), (p, "system"))
         ud = studio.user_dir(kind)

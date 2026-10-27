@@ -340,8 +340,11 @@ class Project:
         cfg["wipe_tower_x"] = [f"{(t or default)[0]:g}" for t in towers]
         cfg["wipe_tower_y"] = [f"{(t or default)[1]:g}" for t in towers]
         cfg["enable_prime_tower"] = "1" if len(used) > 1 else "0"
+        spread = self._multi_extruder(cfg, m, fl) if len(m.get("nozzle_diameter") or []) > 1 else None
         diff_p, diff_f, diff_m = [], [[] for _ in range(n)], []
         for k, v in self.overrides.items():
+            if spread and k in spread[0] and isinstance(v, list) and len(v) == n:
+                v = [x for x, k_var in zip(v, spread[1], strict=True) for _ in range(k_var)]   # each slot's variants
             cfg[k] = v
             kind = self.key_kind(k)
             if kind == "filament":
@@ -354,6 +357,41 @@ class Project:
         cfg["different_settings_to_system"] = [";".join(sorted(diff_p))] + [";".join(sorted(d)) for d in diff_f] + [
             ";".join(sorted(diff_m))]
         return cfg
+
+    def slot_values(self, key, cfg=None):
+        """A filament setting with one value per slot. On two-nozzle printers the project keeps every extruder
+        variant of each filament (see _multi_extruder): the first variant of each slot is given."""
+        cfg = cfg or self.config()
+        v = cfg.get(key)
+        idx = cfg.get("filament_self_index") or []
+        n = len(self.filaments)
+        if isinstance(v, list) and len(v) == len(idx) != n:
+            return [v[idx.index(str(i + 1))] if str(i + 1) in idx else v[0] for i in range(n)]
+        return v
+
+    def _multi_extruder(self, cfg, m, fl):
+        """Printers with two nozzles (H2D, H2C, X2D...): Bambu Studio keeps every extruder variant of each filament
+        (Standard, High Flow...) one after the other, filament_self_index telling whose each value is, and the
+        nozzle type and count per extruder. Returns (the keys spread per variant, variants per slot)."""
+        ext = len(m["nozzle_diameter"])
+        variants = [list(f.get("filament_extruder_variant") or ["Direct Drive Standard"]) for f in fl]
+        spread = {k for f, var in zip(fl, variants, strict=True) for k, v in f.items()
+                  if isinstance(v, list) and len(var) > 1 and len(v) == len(var) and k != "filament_extruder_variant"}
+        for k in spread:
+            vals = []
+            for f, var in zip(fl, variants, strict=True):
+                v = f.get(k, cfg.get(k, [""]))
+                v = v if isinstance(v, list) and v else [v]
+                vals += v if len(v) == len(var) else [v[0]] * len(var)
+            cfg[k] = vals
+        cfg["filament_extruder_variant"] = [x for var in variants for x in var]
+        cfg["filament_self_index"] = [str(i + 1) for i, var in enumerate(variants) for _ in var]
+        types = list(m.get("default_nozzle_volume_type") or ["Standard"] * ext)[:ext]
+        cfg["nozzle_volume_type"] = types
+        cfg["extruder_nozzle_stats"] = [f"{t}#1" for t in types]
+        cfg["flush_volumes_matrix"] = cfg["flush_volumes_matrix"] * ext                 # one matrix per nozzle
+        cfg["flush_multiplier"] = (list(cfg.get("flush_multiplier") or ["1"]) * ext)[:ext]
+        return spread, [len(var) for var in variants]
 
     def purge_volumes(self):
         """(matrix [from][to] in mm³, {(from, to)} set by hand) for the current slots. Values set by hand apply

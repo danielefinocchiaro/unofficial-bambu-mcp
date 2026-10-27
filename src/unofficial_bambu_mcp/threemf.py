@@ -363,10 +363,13 @@ def _author_changes(proj, cfg, same_printer, remapped, warnings):
     if not fkeys:
         return
     base = proj.config()
+    idx = cfg.get("filament_self_index") or []
     dropped = set()
     for k in sorted(fkeys):
         vals = cfg.get(k)
-        cur = base.get(k)
+        if isinstance(vals, list) and len(vals) == len(idx) != n:      # two-nozzle file: every variant of each slot
+            vals = [vals[idx.index(str(i + 1))] if str(i + 1) in idx else vals[0] for i in range(n)]
+        cur = proj.slot_values(k, base)
         if not isinstance(vals, list) or not isinstance(cur, list) or len(cur) < n:
             continue
         new = list(cur)
@@ -386,7 +389,7 @@ def _author_changes(proj, cfg, same_printer, remapped, warnings):
 def _purge_from_file(proj, cfg, warnings):
     """Purge volumes and multiplier of the file (Bambu Studio's own, or the author's), for the slots' colors."""
     n = len(proj.filaments)
-    vals = cfg.get("flush_volumes_matrix") or []
+    vals = (cfg.get("flush_volumes_matrix") or [])[:n * n]          # two-nozzle files: one matrix per nozzle
     try:
         vals = [float(v) for v in vals]
         mult = float((cfg.get("flush_multiplier") or ["1"])[0])

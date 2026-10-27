@@ -919,6 +919,35 @@ def test_relief_on_flat_and_curved_faces(tmp_path, monkeypatch):
     assert r["size_mm"][2] == 3.5 and [p.name for p in s.P().find(r["name"])[1].parts] == ["Base", "Logo"]
 
 
+@needs_bambu
+def test_every_printer_family_presets_and_two_nozzles(tmp_path, monkeypatch):
+    """P1P filaments live in a subfolder (filament/P1P/); two-nozzle printers keep every variant of each filament."""
+    import zipfile
+
+    from unofficial_bambu_mcp import presets, slicer
+    from unofficial_bambu_mcp import server as s
+    monkeypatch.setenv("UBMCP_DIR", str(tmp_path))
+    assert presets.filament_for("Bambu PLA Basic", "Bambu Lab P1P 0.4 nozzle") == "Bambu PLA Basic @BBL P1P"
+    s.new_project("h2d", "Bambu Lab H2D 0.4 nozzle", filaments=[{"preset": "Bambu PLA Basic", "color": "#FFFFFF"},
+                                                                {"preset": "Bambu PLA Basic", "color": "#202020"}])
+    s.add_shape("box", width=20, depth=20, height=6, name="a", filament=1)
+    s.add_shape("box", width=20, depth=20, height=6, name="b", filament=2)
+    assert s.set_setting("nozzle_temperature", "215", slot=2)["value"] == ["220", "215"]       # one value per slot
+    cfg = s.P().config()
+    k = len(cfg["filament_self_index"]) // 2
+    assert cfg["filament_self_index"] == ["1"] * k + ["2"] * k and k > 1
+    assert cfg["nozzle_temperature"] == ["220"] * k + ["215"] * k
+    assert len(cfg["nozzle_volume_type"]) == 2 and len(cfg["extruder_nozzle_stats"]) == 2
+    assert s.get_setting("nozzle_temperature")["value"] == ["220", "215"]
+    r = s.slice_project(1)
+    g = slicer.gcode(r["sliced_file"], 1)
+    assert "; nozzle_temperature = 220,215" in g and r["plates"][0]["warnings"] == []
+    s.open_project(s.save_project()["saved"])
+    assert s.P().overrides["nozzle_temperature"] == ["220", "215"]
+    with zipfile.ZipFile(r["sliced_file"]) as z:
+        assert "Metadata/plate_1.gcode" in z.namelist()
+
+
 def _cube_xml(oid, size):
     s = size
     vs = [(0, 0, 0), (s, 0, 0), (s, s, 0), (0, s, 0), (0, 0, s), (s, 0, s), (s, s, s), (0, s, s)]

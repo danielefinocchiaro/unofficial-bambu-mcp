@@ -107,6 +107,10 @@ Fixed
 - A Bambu Studio command line that hangs (no CPU use for 90 s) is closed with a clear error instead of waiting up
   to 30 minutes; while it hung, macOS took it for the running app and Bambu Studio could not open files.
   `open_in_bambu_studio` starts the app itself when only command-line runs are alive.
+- Filament presets in subfolders of Bambu's profiles (P1P, SUNLU, Polymaker: 150 presets) were not found, so a
+  P1P project could not start. Two-nozzle printers (H2D, H2D Pro, H2C, X2D) failed to slice ("No valid nozzle
+  found"): the project now carries every extruder variant of each filament, as Bambu Studio writes it, and the
+  nozzle type per extruder; per-slot changes still take one value per slot. All 14 printers slice through the MCP.
 - `cut_object`: the upper piece lies on its cut face (with `flip_top`, the default, it was turned upside down onto
   its top). `flip_top` is replaced by `place` (auto, cut_down, keep).
 

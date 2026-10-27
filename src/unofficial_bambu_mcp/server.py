@@ -1083,7 +1083,8 @@ def get_setting(key: str) -> dict:
     if key not in cfg and kind is None:
         close = [k for k in cfg if key.lower() in k.lower()][:15]
         raise ValueError(f"unknown setting '{key}'. Similar: {close}")
-    return {"key": key, "kind": kind, "value": cfg.get(key), "overridden": key in pr.overrides}
+    value = pr.slot_values(key, cfg) if kind == "filament" else cfg.get(key)
+    return {"key": key, "kind": kind, "value": value, "overridden": key in pr.overrides}
 
 
 PA_KEYS = ("pressure_advance", "enable_pressure_advance")
@@ -1108,8 +1109,8 @@ def set_setting(key: str, value: str, slot: int = 0) -> dict:
     if key not in cfg:
         close = [k for k in cfg if key.lower() in k.lower()][:15]
         raise ValueError(f"unknown setting '{key}'. Similar: {close}")
-    cur = cfg[key]
     kind = pr.key_kind(key)
+    cur = pr.slot_values(key, cfg) if kind == "filament" else cfg[key]
     if isinstance(cur, list):
         new = list(cur)
         if kind == "filament" and slot:
