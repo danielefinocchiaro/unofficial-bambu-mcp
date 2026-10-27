@@ -1,6 +1,6 @@
 # Tools
 
-84 tools, generated from the server code by `scripts/gen_tools_doc.py`.
+87 tools, generated from the server code by `scripts/gen_tools_doc.py`.
 
 ## `bambu_status`
 
@@ -559,15 +559,66 @@ slice_project(plate=<new plate>).
 
 ## `send_to_printer`
 
-Prepare the print file of one plate (.gcode.3mf) and hand it to an official Bambu app, where the user
-checks printer and AMS mapping and presses Print/Send. Nothing starts printing by itself.
-via: auto (Bambu Connect if installed, otherwise Bambu Studio) | bambu_connect | bambu_studio | file (only export).
-Tell the user what to press, and the time, weight and filaments of the plate.
+Make the print file of one plate (.gcode.3mf) and send it.
+via = auto (Bambu Connect if installed, otherwise Bambu Studio) | bambu_connect | bambu_studio: open it in an
+  official Bambu app, where the user checks printer and AMS mapping and presses Print/Send.
+via = file: only make the file.
+via = lan: copy it to the printer on the local network and START PRINTING, for printers in LAN-only mode with
+  Developer Mode (print farms; in cloud mode the printer refuses and the answer says so). Two steps: without
+  confirm nothing is sent, the answer gives the AMS slots it would use and a code; check with the user that the
+  plate is clear, then call again with confirm=<code>. AMS slots: from use_ams_filaments, or ams_slots (one AMS
+  slot per project filament slot, 0 = automatic), or the tray with the same type and the closest color.
+Tell the user the time, weight and filaments of the plate (and for lan, follow it with printer_status).
 
 | Parameter | Type | Default |
 |---|---|---|
 | `plate` | integer | `1` |
 | `via` | string | `'auto'` |
+| `ams_slots` | array / null | `None` |
+| `bed_leveling` | boolean | `True` |
+| `timelapse` | boolean | `False` |
+| `confirm` | string | `''` |
+
+## `skip_objects`
+
+Stop printing some objects of the print running now, e.g. a part that came off the plate. It CANNOT be undone.
+ids: the objects' ids as the printer knows them (identify_id; Bambu Handy's skip list, or printer_status
+'skipped_objects'). Do not list every object: to stop the whole print, cancel it on the printer.
+First call without confirm: nothing is sent, the answer says what would be skipped and the confirm code; tell
+the user, and only after they agree call again with confirm=<code>.
+Bambu firmware accepts it only in LAN-only mode with Developer Mode; otherwise use Bambu Handy or the printer.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `ids` | array | required |
+| `confirm` | string | `''` |
+
+## `ams_load`
+
+Load the filament of an AMS slot into the nozzle, like Load in Bambu Studio's Device tab: the nozzle heats,
+the filament loaded now (if any) goes back to its slot, the new one comes in and is purged. slot: as in
+printer_status (AMS 1 = slots 1-4, AMS 2 = 5-8). Only when the printer is not printing.
+First call without confirm: nothing is sent, the answer says what would happen and the confirm code; tell the
+user, and only after they agree call again with confirm=<code>.
+Bambu firmware accepts it only in LAN-only mode with Developer Mode; otherwise use the printer screen, Bambu
+Handy or Bambu Studio.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `slot` | integer | required |
+| `confirm` | string | `''` |
+
+## `ams_unload`
+
+Unload the filament in the nozzle back to its AMS slot, like Unload in Bambu Studio's Device tab (the nozzle
+heats). Only when the printer is not printing. First call without confirm: nothing is sent, the answer gives
+the confirm code; call again with confirm=<code> only after the user agrees.
+Bambu firmware accepts it only in LAN-only mode with Developer Mode; otherwise use the printer screen, Bambu
+Handy or Bambu Studio.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `confirm` | string | `''` |
 
 ## `printer_status`
 

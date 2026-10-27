@@ -66,6 +66,11 @@ Added
 - Previews show negative parts cut out (holes, engravings), painted colors kept.
 - `measure_object` / `measure_between`: sizes, cross-sections (length, width, thickest point, holes), clearances
   between the pieces of print-in-place models, walls thinner than the line width, gaps between objects or parts.
+- Developer Mode tools (LAN-only printers, e.g. print farms): `send_to_printer(via='lan')` uploads and starts a
+  plate, `skip_objects`, `ams_load`, `ams_unload`; each in two steps with a confirm code; refused with a clear
+  answer in cloud mode.
+- CI runs on Linux, Windows and macOS; a second workflow installs Bambu Studio on Windows and Linux and runs the
+  whole suite with slicing.
 - `printer_camera`: a picture from the camera (P1/A1, port 6000), in cloud mode too.
 - `printer_files`, `download_printer_file` (a timelapse comes with its last frame) and `delete_printer_files` (by name
   or age, two steps with a code tied to the exact files, refused during a print): the SD card over FTPS.

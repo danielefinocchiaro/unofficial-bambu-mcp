@@ -53,10 +53,11 @@ are written for the demo ([scripts/make_demo.py](scripts/make_demo.py)).</sub>
 | Calibration | **Temperature tower**, **flow rate test** (pass 1 and 2), **pressure advance tower**, **max volumetric speed test**, **retraction test**, **VFA test** (wall speeds), **first-layer test**, for any filament. Save the result as a **Bambu Studio filament preset**: a new filament gets its own id, like Bambu Studio's *Create Filament*, so you can pick it for an AMS slot; updating it later keeps that id. |
 | Layer actions | **Pause** at a height (magnets, nuts), **filament change** at a height, or any G-code at a height. |
 | Printing | `send_to_printer` makes the print file of a plate and opens it in **Bambu Studio** (or **Bambu Connect**) ready to print: you check the AMS mapping and press Print. |
+| Developer Mode (LAN farms) | For printers in LAN-only mode with Developer Mode, where Bambu firmware accepts commands from other programs: `send_to_printer(via='lan')` uploads the plate and **starts the print**, `skip_objects` skips parts of the running print, `ams_load` / `ams_unload` move filament. Each asks first: the first call sends nothing and gives a code to confirm with. In normal cloud mode the printer refuses them and the answer says so. |
 | Printer status | `printer_status` (read only, local network): state, progress, temperatures, AMS trays with humidity, skipped objects, and warnings (unknown spool being fed, sport speed on a long print, a reading that looks old). |
 | Camera & SD card | `printer_camera`: a picture of the plate right now, so the assistant sees how the print is going. `printer_files` / `download_printer_file`: timelapses (with their last frame) and past print files. `delete_printer_files`: free space on the SD card, only after you confirm the exact list. Works in cloud mode. |
 
-All 84 tools with their parameters: [docs/TOOLS.md](docs/TOOLS.md).
+All 87 tools with their parameters: [docs/TOOLS.md](docs/TOOLS.md).
 
 ## Tested on real hardware
 

@@ -246,10 +246,11 @@ AMS slot, pressing Print), the tool says so and stops there.
 **Never overwrite.** Projects, sliced files and print files get a new name if one exists. Opened files are read as
 a copy. Updating a user's filament preset copies the old one first.
 
-**The printer is read, not driven.** Releases send no command to the printer: `pushall` reads the status, the
-camera and the SD card are read with the LAN access code. The one change they can make is deleting old files from
-the SD card to free space, and only in two steps: a list with a code tied to those files, then the call with the
-code after the user agreed.
+**The printer is read, not driven, unless the user set it up for that.** In normal cloud mode the server only
+reads: `pushall` for the status, the camera and the SD card with the LAN access code. The one change it can make is
+deleting old files from the SD card, in two steps: a list with a code tied to those files, then the call with the
+code after the user agreed. Printers in LAN-only mode with Developer Mode also accept printing, skipping objects and
+loading AMS slots; those tools take the same two steps.
 
 **The access code stays where it is.** The LAN access code is read from Bambu Studio's configuration (or an
 environment variable) at the moment of the connection. It is never returned to the assistant, logged or written
@@ -257,7 +258,7 @@ anywhere. Nothing is sent outside the local network.
 
 ## 7. Testing
 
-- 78 unit tests run in CI on Linux, without Bambu Studio (the tests that need it are skipped there).
+- 86 unit tests run in CI on Linux, Windows and macOS on Linux, without Bambu Studio (the tests that need it are skipped there).
 - Smoke tests run on a machine with Bambu Studio: they build projects, open real files, slice, render previews and
   build the calibration plates, and write everything to a folder so it can be looked at.
 - Three scripts go through a real MCP client over stdio, as an assistant does: a quick check, one against a live

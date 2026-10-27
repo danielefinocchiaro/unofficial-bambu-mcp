@@ -24,8 +24,21 @@ HMS `0500-0500-0001-0007` ("MQTT command verification failed"). The same happens
 skipping objects. Reading the status is allowed.
 
 Commands from other programs are accepted only in **LAN-only mode with Developer Mode** on (printer screen:
-Settings > Network), which turns off the cloud and Bambu Handy. Direct printing and object skipping for that mode are
-on the `lan-print` branch (upload over FTPS, `project_file` and `skip_objects` requests), not in releases.
+Settings > Network), which turns off the cloud and Bambu Handy. For printers set up that way (print farms, people who
+drive everything from their assistant) there are tools that change the printer, all in two steps: the first call
+sends nothing and answers what would happen and a code; only a second call with that code acts.
+
+- `send_to_printer(plate, via='lan', ams_slots, bed_leveling, timelapse, confirm)`: makes the print file, copies it
+  to the SD card over FTPS and sends the `project_file` request that starts it. The AMS slots come from
+  `use_ams_filaments`, from `ams_slots`, or are the trays with the same type and closest color. Refused while the
+  printer is busy.
+- `skip_objects(ids, confirm)`: stop printing some objects of the running print (cannot be undone).
+- `ams_load(slot, confirm)` / `ams_unload(confirm)`: load an AMS slot into the nozzle or unload it, as the Load and
+  Unload buttons of Bambu Studio's Device tab; only when the printer is not printing.
+
+They send the same requests as Bambu Studio (`MachineObject` in `DeviceManager.cpp`). On a printer in cloud mode
+they were checked to be refused with the answers above; the start of a print on a printer in Developer Mode has not
+been tried by the authors, who keep theirs in cloud mode.
 
 ## Printer status
 
