@@ -50,6 +50,9 @@ Added
 - `make_vfa_test`: blocks with their own outer wall speed (40-200 mm/s), the speed engraved on top, and a note when
   the filament's max volumetric speed caps them.
 - `slice_project` gives the cost per plate and per filament, from the presets' price per kg.
+- `printer_camera`: a picture from the camera (P1/A1, port 6000), in cloud mode too.
+- `printer_files`, `download_printer_file` (a timelapse comes with its last frame) and `delete_printer_files` (by name
+  or age, two steps with a code tied to the exact files, refused during a print): the SD card over FTPS.
 - `save_process_preset` / `save_printer_preset`: the project's process or printer changes as a Bambu Studio user
   preset, a child of the project's preset like *Save as*; `replace=True` updates it, with a backup.
 - `edit_preset`, `list_user_presets`, `rename_preset`, `delete_preset`: your user presets without a project. Keys

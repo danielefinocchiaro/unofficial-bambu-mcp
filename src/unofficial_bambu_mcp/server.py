@@ -4,6 +4,7 @@ Unofficial community project, not affiliated with or endorsed by Bambu Lab.
 """
 import functools
 import os
+import time
 import zipfile
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
@@ -13,7 +14,24 @@ from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from . import arrange as arrange_mod
-from . import brim, calibration, cutting, geometry, meshops, orient, paint, presets, preview, printer, slicer, studio, threemf, user_presets
+from . import (
+    brim,
+    calibration,
+    camera,
+    cutting,
+    geometry,
+    meshops,
+    orient,
+    paint,
+    presets,
+    preview,
+    printer,
+    sdcard,
+    slicer,
+    studio,
+    threemf,
+    user_presets,
+)
 from .project import TOWER_BOX, LayerGcode, Obj, Part, Plate, Project, next_free_path
 
 INSTRUCTIONS = """Work on Bambu Studio projects (.3mf) for Bambu Lab printers. Typical flow:
@@ -1051,6 +1069,119 @@ def printer_status() -> dict:
     if warnings:
         out["warnings"] = warnings
     return out
+
+
+@tool()
+def printer_camera(max_size: int = 1280) -> Image:
+    """A picture from the printer's camera right now (P1 and A1 series), to see the plate: how a print is going,
+    whether something came off or made spaghetti, what is left on the bed. Read-only; works with the printer in
+    cloud mode. With the chamber light off the picture is dark. max_size: longest side in pixels."""
+    from io import BytesIO
+
+    from PIL import Image as PILImage
+    jpg = camera.snapshot()
+    img = PILImage.open(BytesIO(jpg))
+    if max_size and max(img.size) > max_size:
+        img.thumbnail((max_size, max_size))
+        buf = BytesIO()
+        img.convert("RGB").save(buf, "JPEG", quality=85)
+        jpg = buf.getvalue()
+    return Image(data=jpg, format="jpeg")
+
+
+def _sd_kind(kind):
+    if kind not in sdcard.FOLDERS:
+        raise ValueError(f"kind must be one of {', '.join(sdcard.FOLDERS)}")
+    return kind
+
+
+def _mb(n):
+    return round(n / 1e6, 1)
+
+
+@tool()
+def printer_files(kind: str = "all", limit: int = 30) -> dict:
+    """Files on the printer's SD card, newest first, with name, size and date and the total per folder:
+    timelapse (videos of past prints), prints (files of past prints the printer keeps), thumbnails (timelapse
+    thumbnails whose video was deleted). Read-only; works with the printer in cloud mode."""
+    kinds = list(sdcard.FOLDERS) if kind == "all" else [_sd_kind(kind)]
+    out = {}
+    with sdcard.session() as f:
+        for k in kinds:
+            files = sdcard.listing(f, k)
+            out[k] = {"files": len(files), "total_mb": _mb(sum(x["size"] for x in files)),
+                      "newest": [{"name": x["name"], "mb": _mb(x["size"]), "date": x["date"]} for x in files[:limit]]}
+            if len(files) > limit:
+                out[k]["more"] = len(files) - limit
+    out["next"] = "download_printer_file to get one; delete_printer_files to free space"
+    return out
+
+
+@tool()
+def download_printer_file(name: str = "latest", kind: str = "timelapse") -> list:
+    """Copy a file from the printer's SD card into the projects folder: a timelapse video (name from printer_files,
+    or 'latest') or the file of a past print (kind='prints'). For a timelapse its last frame is shown too: the
+    finished print. Read-only on the printer."""
+    _sd_kind(kind)
+    with sdcard.session() as f:
+        files = sdcard.listing(f, kind)
+        if not files:
+            raise ValueError(f"there are no {kind} files on the SD card")
+        hit = files[0] if name == "latest" else next((x for x in files if x["name"] == name), None)
+        if hit is None:
+            close = [x["name"] for x in files if name.lower() in x["name"].lower()][:10]
+            raise ValueError(f"no {kind} file named '{name}' on the SD card" + (f". Similar: {close}" if close else ""))
+        path = sdcard.download(f, kind, hit["name"], os.path.join(out_dir(), "printer-files"))
+    res = {"saved": path, "name": hit["name"], "mb": _mb(hit["size"]), "date": hit["date"]}
+    if kind == "timelapse":
+        with open(path, "rb") as fh:
+            frame = sdcard.last_frame(fh.read())
+        if frame:
+            return [res, Image(data=frame, format="jpeg")]
+    return [res]
+
+
+@tool()
+def delete_printer_files(kind: str, names: list[str] | None = None, older_than_days: int = 0,
+                         confirm: str = "") -> dict:
+    """Free space on the printer's SD card: delete timelapse videos (with their thumbnails), files of past prints
+    (kind='prints') or thumbnails whose video is gone (kind='thumbnails'). Pick them by names (from printer_files)
+    or all those older than older_than_days. Two steps: without confirm nothing is deleted, the answer lists what
+    would go, the space freed and a code; show the list to the user and only if they agree call again with
+    confirm=<code>. Deleted files cannot be recovered. Nothing is deleted while a print is running."""
+    _sd_kind(kind)
+    if not names and older_than_days <= 0:
+        raise ValueError("say which files: names=[...] from printer_files, or older_than_days=N")
+    state = printer.summarize(printer.status(max_age=5)[0]).get("state")
+    if state in ("printing", "paused", "preparing"):
+        raise ValueError(f"the printer is {state}: delete files when the print has finished")
+    with sdcard.session() as f:
+        files = sdcard.listing(f, kind)
+        by_name = {x["name"]: x for x in files}
+        if names:
+            missing = [n for n in names if n not in by_name]
+            if missing:
+                raise ValueError(f"not on the SD card ({kind}): {missing}")
+            chosen = [by_name[n] for n in dict.fromkeys(names)]
+        else:
+            limit = time.time() - older_than_days * 86400
+            chosen = [x for x in files if x["t"] < limit]
+        if not chosen:
+            return {"kind": kind, "would_delete": [], "note": f"no {kind} files older than {older_than_days} days"}
+        code = sdcard.confirm_code(kind, [x["name"] for x in chosen])
+        size = sum(x["size"] for x in chosen)
+        if not confirm:
+            return {"kind": kind, "would_delete": [{"name": x["name"], "mb": _mb(x["size"]), "date": x["date"]}
+                                                   for x in chosen],
+                    "files": len(chosen), "frees_mb": _mb(size), "confirm": code,
+                    "next": f"show the list to the user; only if they agree, call again with confirm='{code}'"}
+        if confirm != code:
+            raise ValueError("the code does not match these files (wrong code, or the files changed): call again "
+                             "without confirm to get the current list and code")
+        done = sdcard.delete(f, kind, [x["name"] for x in chosen])
+        left = sdcard.listing(f, kind)
+    return {"kind": kind, "deleted": len(done), "freed_mb": _mb(size), "left": len(left),
+            "left_mb": _mb(sum(x["size"] for x in left))}
 
 
 @tool()

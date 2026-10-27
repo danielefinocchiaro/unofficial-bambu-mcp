@@ -218,7 +218,7 @@ def draw(log):
     d.text((W // 2, 210), "unofficial-bambu-mcp", font=_font(SANS, 44), fill=(255, 255, 255), anchor="mm")
     d.text((W // 2, 262), "Bambu Studio projects from your AI assistant", font=_font(SANS, 22), fill=RES_FG,
            anchor="mm")
-    d.text((W // 2, 300), "You press Print. The printer is only read.", font=_font(SANS, 18), fill=DIM, anchor="mm")
+    d.text((W // 2, 300), "You press Print. Nothing changes on the printer without you.", font=_font(SANS, 18), fill=DIM, anchor="mm")
     add(end, 3000)
     path = os.path.join(DOCS, "demo.gif")
     pal = [f.quantize(colors=128, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE) for f in frames]

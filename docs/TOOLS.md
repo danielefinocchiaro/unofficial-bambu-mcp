@@ -1,6 +1,6 @@
 # Tools
 
-66 tools, generated from the server code by `scripts/gen_tools_doc.py`.
+70 tools, generated from the server code by `scripts/gen_tools_doc.py`.
 
 ## `bambu_status`
 
@@ -432,6 +432,53 @@ a report that looks old). read_at = when the printer sent it; age_s = seconds si
 seconds ago is given again (the printer is asked at most every 20 s).
 Works with the printer in normal cloud mode (Bambu Handy keeps working). Nothing is sent to the printer except a
 status request.
+
+## `printer_camera`
+
+A picture from the printer's camera right now (P1 and A1 series), to see the plate: how a print is going,
+whether something came off or made spaghetti, what is left on the bed. Read-only; works with the printer in
+cloud mode. With the chamber light off the picture is dark. max_size: longest side in pixels.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `max_size` | integer | `1280` |
+
+## `printer_files`
+
+Files on the printer's SD card, newest first, with name, size and date and the total per folder:
+timelapse (videos of past prints), prints (files of past prints the printer keeps), thumbnails (timelapse
+thumbnails whose video was deleted). Read-only; works with the printer in cloud mode.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `kind` | string | `'all'` |
+| `limit` | integer | `30` |
+
+## `download_printer_file`
+
+Copy a file from the printer's SD card into the projects folder: a timelapse video (name from printer_files,
+or 'latest') or the file of a past print (kind='prints'). For a timelapse its last frame is shown too: the
+finished print. Read-only on the printer.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `name` | string | `'latest'` |
+| `kind` | string | `'timelapse'` |
+
+## `delete_printer_files`
+
+Free space on the printer's SD card: delete timelapse videos (with their thumbnails), files of past prints
+(kind='prints') or thumbnails whose video is gone (kind='thumbnails'). Pick them by names (from printer_files)
+or all those older than older_than_days. Two steps: without confirm nothing is deleted, the answer lists what
+would go, the space freed and a code; show the list to the user and only if they agree call again with
+confirm=<code>. Deleted files cannot be recovered. Nothing is deleted while a print is running.
+
+| Parameter | Type | Default |
+|---|---|---|
+| `kind` | string | required |
+| `names` | array / null | `None` |
+| `older_than_days` | integer | `0` |
+| `confirm` | string | `''` |
 
 ## `use_ams_filaments`
 

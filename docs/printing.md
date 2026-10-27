@@ -47,6 +47,22 @@ sent with `send_to_printer`.
 The printer is found by SSDP and, if needed, by a scan of port 8883 on your network; its IP is cached in
 `~/.config/unofficial-bambu-mcp/printers.json` (serial → IP only). Set `BAMBU_PRINTER_IP` to skip the search.
 
+## Camera and SD card
+
+These work with the printer in cloud mode too, with the same LAN access code (tested on a P1S).
+
+- `printer_camera`: one picture from the camera (P1 and A1 series: JPEG frames on port 6000 over TLS). The assistant
+  sees the plate: how a print is going, a part that came off, spaghetti. X1 and H2 printers stream over RTSP, which is
+  not supported yet.
+- `printer_files`: the SD card over FTPS (port 990): timelapse videos, the files of past prints the printer keeps
+  (`/cache`), and timelapse thumbnails whose video was deleted, with size, date and the total per folder.
+- `download_printer_file`: copies one of them into the projects folder; for a timelapse it also shows the last frame,
+  the finished print.
+- `delete_printer_files`: frees space, by name or older than N days. It is the only thing that changes the printer,
+  and it asks first: the first call deletes nothing and lists the files, the space freed and a code tied to exactly
+  those files; only a second call with that code deletes them (timelapse thumbnails go with their video). Refused
+  while a print is running. Deleted files cannot be recovered.
+
 ## AMS
 
 `use_ams_filaments` sets the project's filament slots from what is loaded now (preset and color, user filaments

@@ -601,6 +601,81 @@ def test_vfa_test_and_cost(tmp_path, monkeypatch):
     assert abs(p["cost"] - p["grams_per_filament"][1] * 30 / 1000) < 0.011 and p["cost_per_filament"] == {1: p["cost"]}
 
 
+def test_sd_card_listing_frames_and_camera():
+    import struct
+    import time
+
+    from unofficial_bambu_mcp import camera, sdcard
+    now = time.mktime((2026, 10, 27, 12, 0, 0, 0, 0, -1))
+    rows = ["drw-rw-rw-   1 root  root         0 Mar 01 2026 thumbnail",
+            "-rw-rw-rw-   1 root  root     68664 Oct 26 20:40 video_2026-10-26_20-38-21.avi",
+            "-rw-rw-rw-   1 root  root   3161586 Sep 23 2025 video_2025-09-23_18-41-25.avi",
+            "-rw-rw-rw-   1 root  root       100 Dec 30 10:00 old one.avi"]                      # last year
+    files = sdcard.parse_list(rows, now)
+    assert [f["name"] for f in files] == ["video_2026-10-26_20-38-21.avi", "old one.avi",
+                                          "video_2025-09-23_18-41-25.avi"]
+    assert files[0]["size"] == 68664 and files[0]["date"] == "2026-10-26 20:40" and files[1]["date"].startswith("2025-12-30")
+    a, b = sdcard.confirm_code("timelapse", ["x.avi", "y.avi"]), sdcard.confirm_code("timelapse", ["y.avi", "x.avi"])
+    assert a == b and a.startswith("delete 2 files ") and a != sdcard.confirm_code("timelapse", ["x.avi"])
+    jpg = b"\xff\xd8\xff\xe0" + b"a" * 2000 + b"\xff\xd9"
+    avi = b"RIFF....AVI " + jpg.replace(b"a", b"b") + b"idx" + jpg + b"tail"
+    assert sdcard.last_frame(avi) == jpg
+
+    class Sock:
+        def __init__(self, data):
+            self.data = data
+
+        def recv(self, n):
+            out, self.data = self.data[:n], self.data[n:]
+            return out
+    assert camera.read_frame(Sock(struct.pack("<IIII", len(jpg), 0, 0, 0) + jpg)) == jpg
+    assert len(camera.login_packet("12345678")) == 80
+
+
+def test_delete_printer_files_asks_first(tmp_path, monkeypatch):
+    import contextlib
+
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    from unofficial_bambu_mcp import printer, sdcard
+    from unofficial_bambu_mcp import server as s
+    monkeypatch.setenv("UBMCP_DIR", str(tmp_path))
+    card = {"/timelapse": ["-rw-rw-rw-   1 root  root   5000000 Oct 01 2025 video_old.avi",
+                           "-rw-rw-rw-   1 root  root   1000000 Oct 26 20:40 video_new.avi"],
+            "/timelapse/thumbnail": ["-rw-rw-rw-   1 root  root   20000 Oct 01 2025 video_old.jpg",
+                                     "-rw-rw-rw-   1 root  root   20000 Mar 01 2025 video_gone.jpg"]}
+    deleted = []
+
+    class FakeFTP:
+        def retrlines(self, cmd, cb):
+            for row in card[cmd.split(" ", 1)[1]]:
+                cb(row)
+
+        def delete(self, path):
+            deleted.append(path)
+            folder, name = path.rsplit("/", 1)
+            card[folder] = [r for r in card[folder] if not r.endswith(" " + name)]
+
+    monkeypatch.setattr(sdcard, "session", contextlib.contextmanager(lambda serial=None: (yield FakeFTP())))
+    state = {"gcode_state": "FINISH"}
+    monkeypatch.setattr(printer, "status", lambda serial=None, max_age=20.0: (state, "SERIAL"))
+    assert s.printer_files("thumbnails")["thumbnails"]["files"] == 1          # only the one without its video
+    first = s.delete_printer_files("timelapse", older_than_days=100)
+    assert [f["name"] for f in first["would_delete"]] == ["video_old.avi"] and first["frees_mb"] == 5.0
+    assert deleted == []                                                     # nothing goes without the code
+    with pytest.raises(ToolError, match="does not match"):
+        s.delete_printer_files("timelapse", older_than_days=100, confirm="delete 1 files 0000")
+    state["gcode_state"] = "RUNNING"
+    with pytest.raises(ToolError, match="printing"):
+        s.delete_printer_files("timelapse", older_than_days=100, confirm=first["confirm"])
+    state["gcode_state"] = "FINISH"
+    done = s.delete_printer_files("timelapse", older_than_days=100, confirm=first["confirm"])
+    assert done["deleted"] == 1 and done["left"] == 1
+    assert deleted == ["/timelapse/video_old.avi", "/timelapse/thumbnail/video_old.jpg"]
+    with pytest.raises(ToolError, match="not on the SD card"):
+        s.delete_printer_files("timelapse", names=["../etc"])
+
+
 def _cube_xml(oid, size):
     s = size
     vs = [(0, 0, 0), (s, 0, 0), (s, s, 0), (0, s, 0), (0, 0, s), (s, 0, s), (s, s, s), (0, s, s)]
