@@ -464,6 +464,7 @@ def fill_plate(object: str, copies: int = 0, gap: float = 6.0, rotate: bool = Fa
         ob.at = (float(x), float(y))
 
     template = copy.deepcopy(o)
+    pr.plates[pi].tower = None                       # the fill kept the tower's corner free
     if first:
         put(o, first)
     made = []

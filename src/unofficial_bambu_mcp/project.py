@@ -99,6 +99,7 @@ class Plate:
     def __init__(self, name, objects=None, settings=None):
         self.name, self.objects, self.settings = name, objects or [], settings or {}
         self.layer_gcodes = []          # [LayerGcode], kept sorted by z
+        self.tower = None               # (x, y) of the prime tower kept from an opened file; None = a free corner
 
 
 class Project:
@@ -132,6 +133,8 @@ class Project:
         self.process = process or self.info["default_process"]
         self.filaments = [(presets.filament_for(n, self.machine), c) for n, c in self.filaments]
         self.overrides = {k: v for k, v in self.overrides.items() if not k.startswith("wipe_tower")}
+        for pl in self.plates:
+            pl.tower = None
         return old
 
     # ------------------------------------------------------------ lookup
@@ -326,7 +329,7 @@ class Project:
         towers = []
         for pl in self.plates:
             multi = len({f for o in pl.objects for f in o.filaments()}) > 1
-            towers.append(self.tower_spot(pl) if multi else None)
+            towers.append(pl.tower or (self.tower_spot(pl) if multi else None))
         default = (15.0, 220.0) if self.info["bed"][0] >= 250 else (self.info["bed"][0] - 50, self.info["bed"][1] - 50)
         cfg["wipe_tower_x"] = [f"{(t or default)[0]:g}" for t in towers]
         cfg["wipe_tower_y"] = [f"{(t or default)[1]:g}" for t in towers]
@@ -390,6 +393,8 @@ class Project:
                     entry["painted_colors"] = True
                 objs.append(entry)
             entry = {"plate": pi + 1, "name": pl.name, "objects": objs}
+            if pl.tower:
+                entry["prime_tower_xy"] = [round(pl.tower[0], 1), round(pl.tower[1], 1)]
             if pl.layer_gcodes:
                 entry["layer_gcodes"] = [g.as_dict() for g in pl.layer_gcodes]
             out["plates"].append(entry)

@@ -85,6 +85,9 @@ Fixed
   first change sent after it (P1 printers send only what changed, every 2-4 s), merges by sequence number, says
   when the reading was taken (`read_at`, `age_s`), and warns when a report looks old (no change while the nozzle
   heats or cools, the same report twice) or says "printing" with the heaters off.
+- Opened projects keep where the prime tower of each plate was (`wipe_tower_x/y`): Bambu Studio never lists them
+  among the changed settings, so they were reset to a corner and a tower placed between objects collided with them.
+  `arrange` and `fill_plate` still move it to the corner they keep free; switching printer resets it.
 - `cut_object`: the upper piece lies on its cut face (with `flip_top`, the default, it was turned upside down onto
   its top). `flip_top` is replaced by `place` (auto, cut_down, keep).
 

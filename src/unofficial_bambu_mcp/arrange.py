@@ -393,6 +393,7 @@ def run(pr, cfg, plate=0, objects=None, plates=0, gap=6.0, rotate=False, rotatio
     rotated = {}
     for k, b in enumerate(beds):
         dest = pr.plates[targets[k]]
+        dest.tower = None                            # its corner was kept free: the tower goes there
         for key, x, y in b.items:
             pi, o = by_id[key]
             ang = out[key][1]

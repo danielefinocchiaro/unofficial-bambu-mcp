@@ -676,6 +676,38 @@ def test_delete_printer_files_asks_first(tmp_path, monkeypatch):
         s.delete_printer_files("timelapse", names=["../etc"])
 
 
+@needs_bambu
+def test_prime_tower_place_kept_from_file(tmp_path, monkeypatch):
+    """Bambu Studio never lists wipe_tower_x/y among the changed settings, but slices with them."""
+    import json
+    import zipfile
+
+    from unofficial_bambu_mcp import server as s
+    monkeypatch.setenv("UBMCP_DIR", str(tmp_path))
+    s.new_project("tower", "P1S", filaments=[{"preset": "Bambu PLA Basic", "color": "#FFFFFF"},
+                                             {"preset": "Bambu PLA Basic", "color": "#000000"}])
+    s.add_shape("box", width=30, depth=30, height=5, name="a", filament=1, x=60, y=60)
+    s.add_shape("box", width=30, depth=30, height=5, name="b", filament=2, x=180, y=60)
+    saved = s.save_project()["saved"]
+    moved = str(tmp_path / "moved.3mf")                    # the tower moved by hand in Bambu Studio
+    with zipfile.ZipFile(saved) as zin, zipfile.ZipFile(moved, "w") as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == "Metadata/project_settings.config":
+                cfg = json.loads(data)
+                cfg["wipe_tower_x"], cfg["wipe_tower_y"] = ["120.5"], ["130"]
+                data = json.dumps(cfg).encode()
+            zout.writestr(item, data)
+    s.open_project(moved)
+    assert s.get_setting("wipe_tower_x")["value"] == ["120.5"] and s.get_setting("wipe_tower_y")["value"] == ["130"]
+    assert s.get_project()["plates"][0]["prime_tower_xy"] == [120.5, 130.0]
+    with zipfile.ZipFile(s.save_project()["saved"]) as z:
+        cfg = json.loads(z.read("Metadata/project_settings.config"))
+    assert cfg["wipe_tower_x"] == ["120.5"] and cfg["wipe_tower_y"] == ["130"]
+    s.arrange()                                            # arranging frees a corner for it again
+    assert s.get_setting("wipe_tower_x")["value"] != ["120.5"] and "prime_tower_xy" not in s.get_project()["plates"][0]
+
+
 def _cube_xml(oid, size):
     s = size
     vs = [(0, 0, 0), (s, 0, 0), (s, s, 0), (0, s, 0), (0, 0, s), (s, 0, s), (s, s, s), (0, s, s)]

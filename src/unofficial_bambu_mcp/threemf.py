@@ -500,6 +500,13 @@ def read(path):
     for idx, items in layer_gcodes.items():
         if idx < len(proj.plates):
             proj.plates[idx].layer_gcodes = sorted(items, key=lambda g: g.z)
+    if machine == file_machine:          # where the author put the prime tower of each plate (never in the diff list)
+        wx, wy = cfg.get("wipe_tower_x") or [], cfg.get("wipe_tower_y") or []
+        for i, pl in enumerate(proj.plates):
+            try:
+                pl.tower = (float(wx[i]), float(wy[i]))
+            except (IndexError, TypeError, ValueError):
+                continue
     proj.extras = extras
     proj.warnings = warnings
     proj.source_path = path
