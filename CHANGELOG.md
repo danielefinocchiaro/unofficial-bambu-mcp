@@ -1,9 +1,11 @@
 # Changelog
 
-## 0.3.0 (unreleased)
+## 0.3.0 (2026-10-28), first public release
 
-Tested on a P1S with two AMS units: calibration prints for two third-party filaments, live printer status during
-prints, projects downloaded from MakerWorld and Printables.
+87 tools. Tested on a P1S with two AMS units (calibration prints for two third-party filaments, live printer status
+during prints, projects downloaded from MakerWorld and Printables); all 14 Bambu printers of Bambu Studio 2.8 go
+from a new project to a print file; the whole suite runs on Windows and Linux with Bambu Studio installed.
+The notes below include the development versions 0.1 and 0.2, which were never released.
 
 Added
 - `reprint_objects`: a new project with only some objects (e.g. a part that came off), with a brim.
@@ -119,7 +121,7 @@ Fixed
 - `cut_object`: the upper piece lies on its cut face (with `flip_top`, the default, it was turned upside down onto
   its top). `flip_top` is replaced by `place` (auto, cut_down, keep).
 
-## 0.2.0 (unreleased)
+### Development version 0.2 (not released)
 
 - Calibration plates for any filament: temperature tower (M104 per block, temperatures engraved), flow rate test
   (per-object `print_flow_ratio`, modifier engraved), pressure advance tower (M900 K every millimeter).
@@ -134,7 +136,7 @@ Fixed
 - Sync with Bambu Studio: the project file is re-read when it was saved in the app and there are no unsaved changes;
   conflicts are reported; `sync_with_bambu_studio` to force it.
 
-## 0.1.0 (unreleased)
+### Development version 0.1 (not released)
 
 First version, tested on macOS with Bambu Studio 2.8 and a P1S / A1 mini setup.
 

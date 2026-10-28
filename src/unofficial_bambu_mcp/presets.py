@@ -40,12 +40,13 @@ PROJECT_KEYS = frozenset({
     "other_layers_print_sequence", "other_layers_print_sequence_nums", "start_end_points", "extruder_ams_count",
     "extruder_nozzle_stats", "nozzle_volume_type", "has_filament_switcher", "has_scarf_joint_seam"})
 
-# short names for common single-nozzle printers (any full machine preset name works too)
+# short names for the printers with their 0.4 nozzle (any full machine preset name works too)
 PRINTER_ALIASES = {
     "X1C": "Bambu Lab X1 Carbon 0.4 nozzle", "X1": "Bambu Lab X1 0.4 nozzle", "X1E": "Bambu Lab X1E 0.4 nozzle",
     "P1S": "Bambu Lab P1S 0.4 nozzle", "P1P": "Bambu Lab P1P 0.4 nozzle", "P2S": "Bambu Lab P2S 0.4 nozzle",
     "A1": "Bambu Lab A1 0.4 nozzle", "A1M": "Bambu Lab A1 mini 0.4 nozzle", "A1MINI": "Bambu Lab A1 mini 0.4 nozzle",
-    "H2S": "Bambu Lab H2S 0.4 nozzle",
+    "A2L": "Bambu Lab A2L 0.4 nozzle", "H2S": "Bambu Lab H2S 0.4 nozzle", "H2D": "Bambu Lab H2D 0.4 nozzle",
+    "H2DPRO": "Bambu Lab H2D Pro 0.4 nozzle", "H2C": "Bambu Lab H2C 0.4 nozzle", "X2D": "Bambu Lab X2D 0.4 nozzle",
 }
 
 

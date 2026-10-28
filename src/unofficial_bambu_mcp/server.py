@@ -170,7 +170,8 @@ def list_printers() -> list:
             continue
         info = presets.machine_info(machine)
         out.append({"printer": alias, "machine_preset": machine, "bed_mm": list(info["bed"]),
-                    "max_height_mm": info["max_height"], "default_process": info["default_process"]})
+                    "max_height_mm": info["max_height"], "nozzles": info["extruders"],
+                    "default_process": info["default_process"]})
     return out
 
 

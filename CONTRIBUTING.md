@@ -33,8 +33,8 @@ assistant does.
 - **Through MCP.** Every feature must work for someone who only gave permissions to the MCP server and their
   assistant: no clicks in the app, no AppleScript, no screen reading.
 - **Never overwrite user files.** Save with a new name; copy before changing a user preset.
-- **The printer is the user's.** Nothing that moves, heats or prints without the user pressing a button in an
-  official app (or, on the `lan-print` branch, an explicit confirmation).
+- **The printer is the user's.** Nothing that moves, heats, prints or deletes without the user pressing a button
+  in an official app, or confirming with the code the tool gives (two steps: the first call does nothing).
 - **No Bambu profiles in the repository.** Read them from the user's installation.
 - **Light dependencies.** Pure Python wheels; no GPU, no OpenGL.
 - Errors the assistant can act on are `ValueError`, `LookupError` or `OSError` with a clear message: the server

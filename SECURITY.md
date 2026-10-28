@@ -5,15 +5,17 @@ Here is everything it touches.
 
 ## Your printer
 
-- **Read only.** `printer_status` opens one MQTT connection over TLS (port 8883) on your local network, sends a
-  single `pushall` request and closes. Releases send no other command: no print, no AMS change, no movement, no
-  G-code.
+- **Read only in cloud mode.** `printer_status` opens one MQTT connection over TLS (port 8883) on your local
+  network, sends a single `pushall` request and closes. `printer_camera` reads one picture (port 6000) and
+  `printer_files` / `download_printer_file` read the SD card over FTPS (port 990), all with the LAN access code.
+- **Changes only after a confirmation code.** `delete_printer_files` deletes files on the SD card, and, on printers in
+  LAN-only + Developer Mode, `send_to_printer(via='lan')` starts a print, `skip_objects` skips objects and
+  `ams_load` / `ams_unload` move filament. Each first answers what it would do and a code tied to exactly that; it
+  acts only when called again with the code. A printer in cloud mode refuses the Developer Mode commands.
 - **The LAN access code** is read from Bambu Studio's `BambuStudio.conf` (or `BAMBU_PRINTER_ACCESS_CODE`) at the
   moment of the connection. It is never returned to the assistant, logged or written anywhere.
 - **The only cache** is `~/.config/unofficial-bambu-mcp/printers.json`: serial number → IP address, so the printer
   is found faster next time.
-- The `lan-print` branch (not released) can upload a print and skip objects on printers in LAN-only + Developer
-  Mode; skipping asks the assistant for a confirmation code before it sends anything.
 
 ## Your files
 

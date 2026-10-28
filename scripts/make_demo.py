@@ -41,13 +41,19 @@ SCRIPT = [
                         "x": 115, "y": 150}, False, ["shape", "diameter", "height"]),
          ("preview_plate", {"view": "iso", "zoom": True, "labels": True}, True, ["labels"]),
      ]),
+    ("Write TEA on the side of the cup, raised, in white.", [
+        ("add_relief", {"object": "cup", "text": "TEA", "face": "front", "size": 7, "depth": 0.8, "filament": 2,
+                        "at": [164, 131, 20]},
+         False, ["object", "text", "face", "filament"]),
+        ("preview_plate", {"view": "iso", "zoom": True}, True, []),
+    ]),
     ("Anything likely to come off during the print?", [
         ("check_print_risks", {}, False, []),
         ("set_object_setting", {"object": "pin", "key": "brim_type", "value": "outer_only"}, False,
          ["object", "key", "value"]),
         ("check_print_risks", {}, False, []),
     ]),
-    ("Slice it. How long, and how much filament?", [
+    ("Slice it. How long, how much filament, and what does it cost?", [
         ("slice_project", {}, False, []),
         *[("preview_layer", {"layer": n}, True, ["layer"]) for n in LAYERS],
     ]),
@@ -123,8 +129,9 @@ MONO = ["/System/Library/Fonts/SFNSMono.ttf", "/System/Library/Fonts/Menlo.ttc",
 
 def _call_line(c):
     args = ", ".join(f"{k}={json.dumps(c['args'][k])}" for k in c["shown"])
-    more = len(c["args"]) > len(c["shown"])
-    return f"{c['tool']}({args}{', …' if more else ''})"
+    if len(c["args"]) > len(c["shown"]):
+        args += ", …" if args else "…"
+    return f"{c['tool']}({args})"
 
 
 def _result_line(c):
@@ -142,11 +149,14 @@ def _result_line(c):
         if isinstance(risks, str):
             return risks
         return "; ".join(f"{x.get('object', '')}: {x['risk']}. Advice: {x['advice']}" for x in risks)
+    if t == "add_relief":
+        return f"'{r['part']}' raised on the {r['face']} face, bent around {r['surface_relief_mm']} mm of curve"
     if t == "set_object_setting":
         return ", ".join(f"{k}={v}" for k, v in r["settings"].items())
     if t == "slice_project":
         p = r["plates"][0]
-        return (f"{p['minutes']:.0f} min, {p['grams']:g} g, {p['filament_changes']} filament changes, "
+        cost = f" (cost {p['cost']:.2f} at the presets' price per kg)" if p.get("cost") else ""
+        return (f"{p['minutes']:.0f} min, {p['grams']:g} g{cost}, {p['filament_changes']} filament changes, "
                 f"{p['layers']} layers, warnings: {len(p['warnings'])}")
     if t == "make_temperature_tower":
         temps = r["temperatures_bottom_to_top"]
