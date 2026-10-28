@@ -135,10 +135,12 @@ def version():
         return None
     if SYSTEM == "Darwin":
         plist = os.path.normpath(os.path.join(os.path.dirname(exe), "..", "Info.plist"))
+        if not os.path.isfile(plist):          # BAMBU_STUDIO_EXE set to a missing program
+            return None
         try:
             out = subprocess.run(["/usr/libexec/PlistBuddy", "-c", "Print :CFBundleShortVersionString", plist],
                                  capture_output=True, text=True, timeout=10)
-            return out.stdout.strip() or None
+            return (out.stdout.strip() or None) if out.returncode == 0 else None
         except (OSError, subprocess.SubprocessError):
             return None
     return None
