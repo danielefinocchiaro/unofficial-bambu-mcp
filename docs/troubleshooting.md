@@ -1,5 +1,10 @@
 # Troubleshooting
 
+**The MCP client cannot start the server ("spawn uvx ENOENT", "command not found").**
+Desktop apps (Claude Desktop, Cursor…) often do not see the folders your terminal adds to the PATH. Put the full path
+of `uvx` as the command: `which uvx` prints it (on Windows `where uvx`). The first start downloads the package, which
+can take a minute on a slow connection.
+
 **The assistant only says "Error executing tool …".**
 Old versions of this server let the MCP SDK hide the reason. Update: every expected error now reaches the assistant
 with its message (wrong slot, preset not found, printer refused, broken file…).

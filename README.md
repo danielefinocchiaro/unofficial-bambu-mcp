@@ -3,6 +3,7 @@
 <!-- mcp-name: io.github.danielefinocchiaro/unofficial-bambu-mcp -->
 
 [![ci](https://github.com/danielefinocchiaro/unofficial-bambu-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/danielefinocchiaro/unofficial-bambu-mcp/actions/workflows/ci.yml)
+[![pypi](https://img.shields.io/pypi/v/unofficial-bambu-mcp)](https://pypi.org/project/unofficial-bambu-mcp/)
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
@@ -97,12 +98,9 @@ More in [docs/printing.md](docs/printing.md).
 
 ## Quick start
 
-Requirements: Python 3.10+, [uv](https://docs.astral.sh/uv/) and Bambu Studio.
-
-```bash
-git clone https://github.com/danielefinocchiaro/unofficial-bambu-mcp
-cd unofficial-bambu-mcp && uv sync
-```
+Requirements: [uv](https://docs.astral.sh/uv/) and Bambu Studio. The package comes from
+[PyPI](https://pypi.org/project/unofficial-bambu-mcp/): `uvx` downloads it the first time (and Python 3.10+ if you
+do not have it), so there is nothing to clone or install by hand.
 
 It is a standard MCP server (stdio), so any MCP client that runs local servers can use it. It was developed and
 tested with Claude Code; the other clients below take the same command in their own config file.
@@ -110,7 +108,7 @@ tested with Claude Code; the other clients below take the same command in their 
 **Claude Code**
 
 ```bash
-claude mcp add bambu -- uv run --directory /path/to/unofficial-bambu-mcp unofficial-bambu-mcp
+claude mcp add bambu -- uvx unofficial-bambu-mcp
 ```
 
 **Claude Desktop** (`claude_desktop_config.json`), **Cursor** (`~/.cursor/mcp.json`), **Windsurf**
@@ -120,8 +118,8 @@ claude mcp add bambu -- uv run --directory /path/to/unofficial-bambu-mcp unoffic
 {
   "mcpServers": {
     "bambu": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/unofficial-bambu-mcp", "unofficial-bambu-mcp"]
+      "command": "uvx",
+      "args": ["unofficial-bambu-mcp"]
     }
   }
 }
@@ -131,18 +129,20 @@ claude mcp add bambu -- uv run --directory /path/to/unofficial-bambu-mcp unoffic
 
 ```toml
 [mcp_servers.bambu]
-command = "uv"
-args = ["run", "--directory", "/path/to/unofficial-bambu-mcp", "unofficial-bambu-mcp"]
+command = "uvx"
+args = ["unofficial-bambu-mcp"]
 ```
 
 **VS Code** (GitHub Copilot agent mode, `.vscode/mcp.json`):
 
 ```json
-{ "servers": { "bambu": { "type": "stdio", "command": "uv",
-  "args": ["run", "--directory", "/path/to/unofficial-bambu-mcp", "unofficial-bambu-mcp"] } } }
+{ "servers": { "bambu": { "type": "stdio", "command": "uvx", "args": ["unofficial-bambu-mcp"] } } }
 ```
 
-The ChatGPT app only connects to remote MCP servers, and this one has to run on the computer with Bambu Studio.
+- If a desktop app cannot find `uvx` (`spawn uvx ENOENT`), put its full path as the command: `which uvx` prints it.
+- `uvx` keeps the version it downloaded: write `unofficial-bambu-mcp@latest` instead to get new releases.
+- From a clone (for development): `uv run --directory /path/to/unofficial-bambu-mcp unofficial-bambu-mcp`.
+- The ChatGPT app only connects to remote MCP servers, and this one has to run on the computer with Bambu Studio.
 
 Then ask: *"What version of Bambu Studio do I have, and which printers can you use?"*
 
@@ -191,7 +191,6 @@ flattened the way the app does. Details in [docs/how-it-works.md](docs/how-it-wo
 
 ## Roadmap
 
-- A package on PyPI (`uvx unofficial-bambu-mcp`)
 - Mesh simplification and repair; the nozzle of each filament on two-nozzle printers; X1/H2 camera
 - A live bridge inside the slicer, to be proposed to OrcaSlicer and Bambu Studio
 

@@ -25,4 +25,5 @@ when a GitHub release is published.
    The workflow checks the tag against both files, runs the tests, builds, publishes to PyPI, then to the MCP
    Registry (it retries for a few minutes while PyPI updates).
 
-After the first PyPI release, the quick start can become `claude mcp add bambu -- uvx unofficial-bambu-mcp`.
+The README's quick start installs from PyPI with `uvx unofficial-bambu-mcp`; `uvx` keeps a cached copy, and
+`unofficial-bambu-mcp@latest` in the command makes it fetch the newest release.
