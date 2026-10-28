@@ -892,6 +892,34 @@ def test_svg_shapes(tmp_path):
     assert abs(w - 80.5) < 0.1 and abs(np.mean(shape.bounds[::2])) < 1e-6
 
 
+def test_relief_wraps_around_curves():
+    """Text on the side of a cup keeps its width along the surface and stands out straight from it, also off
+    center; a step under it does not swallow part of it; on a slope it keeps its size along the slope."""
+    from unofficial_bambu_mcp import relief
+    v, t = geometry.cylinder(30, 40)
+    tea = geometry.text_outline("TEA", 7, None)
+    width = tea.bounds[2] - tea.bounds[0]
+    for cu in (0.0, 4.0, 8.0):                                  # 8: projected flat, it would not fit on the cup
+        tv, tt, info = relief.build(v, t, tea, "front", (cu, 20.0), 0.8)
+        ang = np.arctan2(tv[:, 0], -tv[:, 1])
+        r = np.hypot(tv[:, 0], tv[:, 1])
+        assert abs(np.ptp(ang) * 15 - width) < 0.2 and info["surface_relief_mm"] > 1
+        assert abs(np.degrees((ang.min() + ang.max()) / 2) - np.degrees(np.arcsin(cu / 15))) < 1
+        side = ang > np.radians(30)
+        assert abs(r[side].max() - 15.8) < 0.05 and r.min() > 14.65 and r.max() < 15.85    # 0.8 out, square to it
+        assert geometry.check(tv, tt)["manifold"]
+    m3 = geometry.m3
+    step = m3.Manifold.cube((40, 20, 10)) + m3.Manifold.cube((20, 20, 2)).translate((20, 0, 10))
+    hello = geometry.text_outline("HELLO", 6, None)
+    tv, tt, _ = relief.build(*geometry.from_manifold(step), hello, "top", (20.0, 10.0), 1.0)
+    assert abs(np.ptp(tv[:, 0]) - (hello.bounds[2] - hello.bounds[0])) < 0.1
+    roof = m3.Manifold.extrude(m3.CrossSection([[(0, 0), (40, 0), (0, 40 * math.tan(math.radians(30)))]]), 20)
+    slope = m3.Manifold.cube((40, 20, 10)) + roof.rotate((90, 0, 0)).translate((0, 20, 10))
+    tv, tt, _ = relief.build(*geometry.from_manifold(slope), hello, "top", (20.0, 10.0), 1.0)
+    along = np.ptp(tv[:, 0]) / math.cos(math.radians(30))
+    assert abs(along - (hello.bounds[2] - hello.bounds[0])) < 1.0      # projected flat it was 15% longer
+
+
 @needs_bambu
 def test_relief_on_flat_and_curved_faces(tmp_path, monkeypatch):
     from mcp.server.mcpserver.exceptions import ToolError

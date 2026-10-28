@@ -62,7 +62,8 @@ Added
 - `export_stl`, `replace_with_stl`, `align_objects`, `convert_units`, `set_object_printable`, `set_part_type`,
   `copy_object_settings`: the small object tools of Bambu Studio's menus.
 - `add_relief`: text or an SVG logo on a face, raised (as a part, any filament) or engraved (a negative part),
-  bent onto the surface measured on a 0.05-0.25 mm grid, so curved faces work (a cup's side, a gnome's back).
+  wrapped on the surface measured on a 0.05-0.25 mm grid, so curved faces work (a cup's side, a gnome's back): its
+  size is measured along the surface, not stretched toward the sides, and it stands out perpendicular to it.
   `add_shape('svg')`: an SVG as a solid, optionally on a base (svg.py reads paths with curves and arcs, rect,
   circle, ellipse, polygon, polyline, group transforms, nonzero/evenodd, strokes as areas).
 - Previews show negative parts cut out (holes, engravings), painted colors kept.

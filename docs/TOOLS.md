@@ -142,9 +142,10 @@ From a 3MF every object is imported (with its parts and filament assignments).
 ## `add_relief`
 
 Text or an SVG logo on a face of an object, raised or engraved, like Bambu Studio's Text and SVG tools. It
-follows the surface, curved faces too. face: top, bottom, front, back, left, right (the side it is read from);
-at: [x, y, z] plate point to center it on (default: the middle of that face); size: capital letter height for
-text, longest side for an SVG (mm); depth: how far it stands out or goes in; rotate: degrees within the face.
+wraps around curved faces: on a cup it keeps its size along the surface and stands out square to it.
+face: top, bottom, front, back, left, right (the side it is read from); at: [x, y, z] plate point to center it
+on (default: the middle of that face); size: capital letter height for text, longest side for an SVG (mm);
+depth: how far it stands out or goes in; rotate: degrees within the face.
 Raised, it is a new part (filament=N prints it in another color); engraved, a negative part (set_part_type
 turns it back). Look at preview_plate afterwards.
 

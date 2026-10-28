@@ -43,7 +43,7 @@ SCRIPT = [
      ]),
     ("Write TEA on the side of the cup, raised, in white.", [
         ("add_relief", {"object": "cup", "text": "TEA", "face": "front", "size": 7, "depth": 0.8, "filament": 2,
-                        "at": [164, 131, 20]},
+                        "at": [167, 131, 20]},
          False, ["object", "text", "face", "filament"]),
         ("preview_plate", {"view": "iso", "zoom": True}, True, []),
     ]),
