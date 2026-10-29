@@ -977,6 +977,33 @@ def test_every_printer_family_presets_and_two_nozzles(tmp_path, monkeypatch):
         assert "Metadata/plate_1.gcode" in z.namelist()
 
 
+@needs_bambu
+def test_filament_settings_follow_added_and_removed_slots(tmp_path, monkeypatch):
+    """A filament setting changed with two slots gets a value for a third one (its preset's), and loses it again
+    when the slot goes."""
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    from unofficial_bambu_mcp import presets
+    from unofficial_bambu_mcp import server as s
+    monkeypatch.setenv("UBMCP_DIR", str(tmp_path))
+    s.new_project("slots", "P1S", filaments=[{"preset": "Bambu PLA Basic", "color": "#FFFFFF"},
+                                             {"preset": "Bambu PLA Basic", "color": "#202020"}])
+    s.add_shape("box", width=20, depth=20, height=6, name="a", filament=1)
+    assert s.set_setting("nozzle_temperature", "215", slot=2)["value"] == ["220", "215"]
+    s.set_filament(3, "Bambu PETG Basic", "#FF0000")
+    petg = presets.settings("filament", s.P().filaments[2][0])["nozzle_temperature"][0]
+    assert petg != "220" and s.get_setting("nozzle_temperature")["value"] == ["220", "215", petg]
+    assert s.set_setting("nozzle_temperature", "250", slot=3)["value"] == ["220", "215", "250"]
+    with pytest.raises(ToolError, match=r"slot must be 1\.\.3"):
+        s.set_setting("nozzle_temperature", "250", slot=4)
+    assert s.set_setting("fan_min_speed", "100")["value"] == ["100"] * 3                     # 0 = every slot
+    s.open_project(s.save_project()["saved"])
+    cfg = s.P().config()
+    assert cfg["nozzle_temperature"] == ["220", "215", "250"] and len(cfg["fan_min_speed"]) == 3
+    s.P().filaments.pop()                                   # a slot goes, as use_ams_filaments can do
+    assert s.P().config()["nozzle_temperature"] == ["220", "215"] and s.P().overrides["fan_min_speed"] == ["100"] * 2
+
+
 def _cube_xml(oid, size):
     s = size
     vs = [(0, 0, 0), (s, 0, 0), (s, s, 0), (0, s, 0), (0, 0, s), (s, 0, s), (s, s, s), (0, s, s)]

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+Fixed
+- A filament setting changed before a slot was added (`set_filament` with a new slot, `use_ams_filaments`) now
+  gets a value for the new slot, its preset's, so `set_setting(slot=3)` works and the saved file has one value
+  per filament; it loses the value of a slot that goes.
+- `bambu_status` gives no Bambu Studio version when `BAMBU_STUDIO_EXE` points to a missing program.
+
 ## 0.3.0 (2026-10-28), first public release
 
 87 tools. Tested on a P1S with two AMS units (calibration prints for two third-party filaments, live printer status

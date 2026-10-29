@@ -315,6 +315,9 @@ class Project:
                 v = f.get(k, cfg.get(k, [""]))
                 vals.append(v[0] if isinstance(v, list) and v else v)
             cfg[k] = vals
+        for k, v in self.overrides.items():          # slots added or removed since a filament setting was changed:
+            if k in fkeys and isinstance(v, list) and len(v) != len(fl):
+                self.overrides[k] = (v + cfg[k][len(v):])[:len(fl)]      # a new slot starts from its preset value
         n = len(self.filaments)
         cols = [c for _, c in self.filaments]
         cfg.update({

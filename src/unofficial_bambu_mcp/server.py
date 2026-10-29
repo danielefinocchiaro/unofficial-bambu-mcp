@@ -1119,8 +1119,8 @@ def set_setting(key: str, value: str, slot: int = 0) -> dict:
     if isinstance(cur, list):
         new = list(cur)
         if kind == "filament" and slot:
-            if not 1 <= slot <= len(new):
-                raise ValueError(f"slot must be 1..{len(new)}")
+            if not 1 <= slot <= len(pr.filaments):
+                raise ValueError(f"slot must be 1..{len(pr.filaments)} (add slots with set_filament)")
             new[slot - 1] = value
         else:
             new = [value] * len(new)
