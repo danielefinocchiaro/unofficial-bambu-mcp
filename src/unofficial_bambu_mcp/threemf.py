@@ -29,7 +29,9 @@ PASSTHROUGH = ()
 LAYER_GCODE_FILE = "Metadata/custom_gcode_per_layer.xml"
 NOT_FROM_FILE = ("enable_prime_tower", "filament_extruder_variant", "print_extruder_variant",   # worked out for the project
                  "filament_cost", "filament_notes",                                             # change no print
-                 "wall_filament", "solid_infill_filament", "sparse_infill_filament")            # old default 1: would recolor
+                 "wall_filament", "solid_infill_filament", "sparse_infill_filament",            # old default 1: would recolor
+                 "filament_prime_volume",                                                       # the slicer CLI writes 45
+                 "filament_preheat_temperature_delta")                                          # 0 in older files: template default
 MAX_LISTED = 12                                                       # settings named in a warning
 
 

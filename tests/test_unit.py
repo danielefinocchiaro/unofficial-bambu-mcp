@@ -1027,13 +1027,15 @@ def test_open_project_values_not_marked_as_changed(tmp_path, monkeypatch):
             if n == "Metadata/project_settings.config":
                 cfg = json.loads(data)
                 cfg.update(fan_min_speed=["30", "40"], close_fan_the_first_x_layers=["3", "3"], wall_loops="5",
-                           wall_filament="1", machine_start_gcode=";mine")
+                           wall_filament="1", machine_start_gcode=";mine", filament_prime_volume=["45", "45"],
+                           filament_preheat_temperature_delta=["0", "0"])     # written by the slicer CLI, set by no one
                 data = json.dumps(cfg)
             out.writestr(n, data)
     before = src.read_bytes()
     note = next(w for w in s.open_project(str(src))["warnings"] if "not marked" in w)
     assert "fan_min_speed 30,40" not in note and "fan_min_speed 30 (preset 100)" in note and "wall_loops 5 (preset 2)" in note
     assert "keep_file_values=True" in note and "machine_start_gcode" not in note and "wall_filament" not in note
+    assert "filament_prime_volume" not in note and "filament_preheat_temperature_delta" not in note
     assert s.get_setting("fan_min_speed")["value"] == ["100", "100"] and "fan_min_speed" not in s.P().overrides
     assert s.P().flush_multiplier == 1.2
     r = s.open_project(str(src), keep_file_values=True)
