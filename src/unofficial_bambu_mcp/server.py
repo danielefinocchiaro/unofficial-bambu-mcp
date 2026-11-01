@@ -208,11 +208,14 @@ def new_project(name: str, printer: str = "P1S", process: str = "", filaments: l
 
 
 @tool()
-def open_project(path: str) -> dict:
+def open_project(path: str, keep_file_values: bool = False) -> dict:
     """Open a .3mf saved by Bambu Studio (or downloaded from MakerWorld). The file is never modified:
-    save_project writes a new file. Returns the project summary and what could not be carried over."""
+    save_project writes a new file. Returns the project summary and what could not be carried over.
+    Like Bambu Studio, it keeps the settings the file marks as changed; the others follow the presets, and a warning
+    names those that differ. keep_file_values=True keeps those too (filament and process settings, not the printer's),
+    for files written by a script that does not mark them; saving then marks them."""
     path = os.path.abspath(os.path.expanduser(path))
-    S.project = threemf.read(path)
+    S.project = threemf.read(path, keep_file_values)
     S.saved, S.sliced = None, None
     S.sliced_plates = {}
     _watch(path)

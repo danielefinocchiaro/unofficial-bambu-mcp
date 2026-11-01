@@ -1004,6 +1004,48 @@ def test_filament_settings_follow_added_and_removed_slots(tmp_path, monkeypatch)
     assert s.P().config()["nozzle_temperature"] == ["220", "215"] and s.P().overrides["fan_min_speed"] == ["100"] * 2
 
 
+@needs_bambu
+def test_open_project_values_not_marked_as_changed(tmp_path, monkeypatch):
+    """A script can write values that different_settings_to_system does not list. Bambu Studio replaces them with the
+    presets' on opening: so do we, with a warning naming them, or they stay when asked; the printer's never do."""
+    import json
+    import zipfile
+
+    from unofficial_bambu_mcp import server as s
+    monkeypatch.setenv("UBMCP_DIR", str(tmp_path))
+    s.new_project("plain", "P1S", filaments=[{"preset": "Bambu PLA Basic", "color": "#FFFFFF"},
+                                             {"preset": "Bambu PLA Basic", "color": "#202020"}])
+    s.add_shape("box", width=20, depth=20, height=6, name="a", filament=1)
+    s.add_shape("box", width=20, depth=20, height=6, name="b", filament=2)
+    s.set_purge_volumes(multiplier=1.2)
+    saved = s.save_project()["saved"]
+    assert not [w for w in s.open_project(saved)["warnings"] if "not marked" in w]
+    src = tmp_path / "script.3mf"
+    with zipfile.ZipFile(saved) as z, zipfile.ZipFile(src, "w") as out:
+        for n in z.namelist():
+            data = z.read(n)
+            if n == "Metadata/project_settings.config":
+                cfg = json.loads(data)
+                cfg.update(fan_min_speed=["30", "40"], close_fan_the_first_x_layers=["3", "3"], wall_loops="5",
+                           wall_filament="1", machine_start_gcode=";mine")
+                data = json.dumps(cfg)
+            out.writestr(n, data)
+    before = src.read_bytes()
+    note = next(w for w in s.open_project(str(src))["warnings"] if "not marked" in w)
+    assert "fan_min_speed 30,40" not in note and "fan_min_speed 30 (preset 100)" in note and "wall_loops 5 (preset 2)" in note
+    assert "keep_file_values=True" in note and "machine_start_gcode" not in note and "wall_filament" not in note
+    assert s.get_setting("fan_min_speed")["value"] == ["100", "100"] and "fan_min_speed" not in s.P().overrides
+    assert s.P().flush_multiplier == 1.2
+    r = s.open_project(str(src), keep_file_values=True)
+    assert s.get_setting("fan_min_speed")["value"] == ["30", "40"] and s.get_setting("wall_loops")["value"] == "5"
+    assert s.get_setting("close_fan_the_first_x_layers")["value"] == ["3", "3"] and s.P().flush_multiplier == 1.2
+    assert "machine_start_gcode" not in r["overrides"] and "wall_filament" not in r["overrides"]
+    assert src.read_bytes() == before                                     # the file is never touched
+    r = s.open_project(s.save_project()["saved"])                         # saving marks them: now they stay by themselves
+    assert r["overrides"]["fan_min_speed"] == ["30", "40"] and r["overrides"]["wall_loops"] == "5"
+    assert not [w for w in r["warnings"] if "not marked" in w]
+
+
 def _cube_xml(oid, size):
     s = size
     vs = [(0, 0, 0), (s, 0, 0), (s, s, 0), (0, s, 0), (0, 0, s), (s, 0, s), (s, s, s), (0, s, s)]

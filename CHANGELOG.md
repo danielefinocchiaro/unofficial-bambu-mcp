@@ -7,6 +7,11 @@ Fixed
   gets a value for the new slot, its preset's, so `set_setting(slot=3)` works and the saved file has one value
   per filament; it loses the value of a slot that goes.
 - `bambu_status` gives no Bambu Studio version when `BAMBU_STUDIO_EXE` points to a missing program.
+- `open_project` no longer drops silently the values a file holds without marking them as changed (files written by
+  scripts, e.g. custom fan speeds): like Bambu Studio it follows the presets, and a warning now names them.
+
+Added
+- `open_project(keep_file_values=True)`: keeps those values, filament and process ones, and saving then marks them.
 
 ## 0.3.0 (2026-10-28), first public release
 

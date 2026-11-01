@@ -27,6 +27,10 @@ PROFILE_FILE = "Metadata/layer_heights_profile.txt"
 # extra files we can carry over unchanged when plates are not renumbered
 PASSTHROUGH = ()
 LAYER_GCODE_FILE = "Metadata/custom_gcode_per_layer.xml"
+NOT_FROM_FILE = ("enable_prime_tower", "filament_extruder_variant", "print_extruder_variant",   # worked out for the project
+                 "filament_cost", "filament_notes",                                             # change no print
+                 "wall_filament", "solid_infill_filament", "sparse_infill_filament")            # old default 1: would recolor
+MAX_LISTED = 12                                                       # settings named in a warning
 
 
 def plate_stride(bed_w):
@@ -336,6 +340,13 @@ def _meta(el):
     return {m.get("key"): m.get("value") for m in el.findall("metadata") if m.get("key")}
 
 
+def _per_slot(vals, idx, n):
+    """A filament setting of a file with one value per slot; two-nozzle files have every variant of each slot."""
+    if isinstance(vals, list) and len(vals) == len(idx) != n:
+        return [vals[idx.index(str(i + 1))] if str(i + 1) in idx else vals[0] for i in range(n)]
+    return vals
+
+
 def _author_changes(proj, cfg, same_printer, remapped, warnings):
     """The author's changes to the presets, from different_settings_to_system: [process, filament 1..n, printer].
     Printer changes (e.g. a custom start G-code) only make sense on that printer, filament changes only on that
@@ -366,9 +377,7 @@ def _author_changes(proj, cfg, same_printer, remapped, warnings):
     idx = cfg.get("filament_self_index") or []
     dropped = set()
     for k in sorted(fkeys):
-        vals = cfg.get(k)
-        if isinstance(vals, list) and len(vals) == len(idx) != n:      # two-nozzle file: every variant of each slot
-            vals = [vals[idx.index(str(i + 1))] if str(i + 1) in idx else vals[0] for i in range(n)]
+        vals = _per_slot(cfg.get(k), idx, n)
         cur = proj.slot_values(k, base)
         if not isinstance(vals, list) or not isinstance(cur, list) or len(cur) < n:
             continue
@@ -384,6 +393,65 @@ def _author_changes(proj, cfg, same_printer, remapped, warnings):
     if dropped:
         warnings.append(f"filament settings changed by the author were not carried over to replaced filaments: "
                         f"{', '.join(sorted(dropped))}")
+
+
+def _same_value(a, b):
+    """The same setting value, whatever its number format ('1', '1.0', '1%') or the variants one of the lists has more."""
+    a, b = a if isinstance(a, list) else [a], b if isinstance(b, list) else [b]
+    for x, y in zip(a, b, strict=False):
+        try:
+            if x != y and float(str(x).rstrip("%")) != float(str(y).rstrip("%")):
+                return False
+        except ValueError:
+            return False
+    return True
+
+
+def _unmarked_values(proj, cfg, remapped, with_process):
+    """Filament and process values of the file that differ from the presets but are not in its
+    different_settings_to_system, as {key: (values for the project, one value of the file, the preset's)}.
+    In Bambu Studio's files these are old preset values, and it replaces them with the presets' when it opens a file.
+    Printer values are not looked at: G-code and limits of an old preset must not come back."""
+    _, process, filaments = proj.preset_settings()
+    base = proj.config()
+    idx = cfg.get("filament_self_index") or []
+    n = len(proj.filaments)
+    found = {}
+    for k in sorted(cfg):
+        if k in proj.overrides or k in NOT_FROM_FILE or presets.kind_of(k) not in ("filament", "process"):
+            continue
+        if any(k in f for f in filaments):
+            vals, cur = _per_slot(cfg[k], idx, n), proj.slot_values(k, base)
+            if not isinstance(vals, list) or not isinstance(cur, list) or len(vals) < n or len(cur) < n:
+                continue
+            differ = [i for i in range(n) if not remapped[i] and cur[i] != "" and not _same_value(vals[i], cur[i])]
+            if differ:
+                new = [vals[i] if i in differ else cur[i] for i in range(n)]
+                found[k] = (new, vals[differ[0]], cur[differ[0]])
+        elif with_process and k in process and not _same_value(cfg[k], base.get(k)):
+            found[k] = (cfg[k], cfg[k], base.get(k))
+    return found
+
+
+def _brief(v):
+    v = ",".join(map(str, v)) if isinstance(v, list) else v
+    return v if isinstance(v, str) and len(v) <= 24 and "\n" not in v else "..."
+
+
+def _file_values(proj, cfg, remapped, with_process, keep, warnings):
+    """Keep the values of _unmarked_values, or say which ones follow the presets."""
+    found = _unmarked_values(proj, cfg, remapped, with_process)
+    if not found:
+        return
+    if keep:
+        proj.overrides.update({k: new for k, (new, _, _) in found.items()})
+        warnings.append(f"values of the file not marked as changed were kept: {', '.join(found)}")
+        return
+    listed = ", ".join(f"{k} {_brief(a)} (preset {_brief(b)})" for k, (_, a, b) in list(found.items())[:MAX_LISTED])
+    more = f" and {len(found) - MAX_LISTED} more" if len(found) > MAX_LISTED else ""
+    warnings.append(f"values of the file (version {cfg.get('version', '?')}) that differ from its presets but are not "
+                    "marked as changed follow the presets, as when Bambu Studio opens a file: "
+                    f"{listed}{more}. To keep them: open_project(path, keep_file_values=True)")
 
 
 def _purge_from_file(proj, cfg, warnings):
@@ -414,8 +482,9 @@ def _bed_width(cfg, fallback):
         return fallback
 
 
-def read(path):
-    """Open a Bambu Studio .3mf as a Project (copy semantics: the file itself is never modified)."""
+def read(path, keep_file_values=False):
+    """Open a Bambu Studio .3mf as a Project (copy semantics: the file itself is never modified).
+    keep_file_values also keeps the filament and process values the file does not mark as changed."""
     warnings = []
     with zipfile.ZipFile(path) as z:
         names = set(z.namelist())
@@ -466,6 +535,8 @@ def read(path):
     if cfg.get("curr_bed_type"):      # a project choice, not a preset setting: never listed in the diff above
         proj.overrides["curr_bed_type"] = cfg["curr_bed_type"]
     _purge_from_file(proj, cfg, warnings)
+    if machine == file_machine:          # on another printer the file's values were not meant for this one
+        _file_values(proj, cfg, remapped, process is not None, keep_file_values, warnings)
 
     # objects from model_settings (names, parts, filaments, settings) + plates
     obj_meta, plates_meta = {}, []
