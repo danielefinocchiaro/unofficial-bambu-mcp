@@ -2846,8 +2846,59 @@ def make_retraction_test(filament: int = 1, lengths: list[float] | None = None) 
                     "is replaced, save it first if needed)"}
 
 
+class _BearerAuth:
+    """Pure ASGI middleware: 401 unless the request carries the exact bearer token."""
+
+    def __init__(self, app, token):
+        self.app = app
+        self.token = token.encode()
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            import hmac
+            got = dict(scope["headers"]).get(b"authorization", b"")
+            if not hmac.compare_digest(got, b"Bearer " + self.token):
+                body = b'{"error":"unauthorized"}'
+                await send({"type": "http.response.start", "status": 401,
+                            "headers": [(b"content-type", b"application/json"),
+                                        (b"content-length", str(len(body)).encode()),
+                                        (b"www-authenticate", b"Bearer")]})
+                await send({"type": "http.response.body", "body": body})
+                return
+        await self.app(scope, receive, send)
+
+
+def _serve_http(host, port, token):
+    import uvicorn
+    app = mcp.streamable_http_app(host=host)
+    if token:
+        app.add_middleware(_BearerAuth, token=token)
+    uvicorn.run(app, host=host, port=port)
+
+
 def main():
-    mcp.run()
+    """stdio by default. UBMCP_TRANSPORT=http serves streamable-http at /mcp
+    (UBMCP_HOST, UBMCP_PORT, UBMCP_TOKEN); see docs/specs/http-transport.md."""
+    import sys
+
+    def refuse(msg):
+        print(f"unofficial-bambu-mcp: {msg}", file=sys.stderr)
+        sys.exit(2)
+
+    transport = os.environ.get("UBMCP_TRANSPORT", "stdio")
+    if transport == "stdio":
+        mcp.run()
+        return
+    if transport != "http":
+        refuse(f"UBMCP_TRANSPORT must be 'stdio' or 'http', got {transport!r}")
+    host = os.environ.get("UBMCP_HOST", "127.0.0.1")
+    port = int(os.environ.get("UBMCP_PORT", "8765"))
+    token = os.environ.get("UBMCP_TOKEN") or None
+    if token is None:
+        if host not in ("127.0.0.1", "localhost", "::1"):
+            refuse(f"refusing to listen on {host} without UBMCP_TOKEN")
+        print("unofficial-bambu-mcp: warning: serving HTTP without a token (loopback only)", file=sys.stderr)
+    _serve_http(host, port, token)
 
 
 if __name__ == "__main__":
