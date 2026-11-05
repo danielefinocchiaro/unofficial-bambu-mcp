@@ -12,6 +12,10 @@ Fixed
 
 Added
 - `open_project(keep_file_values=True)`: keeps those values, filament and process ones, and saving then marks them.
+- HTTP transport: `UBMCP_TRANSPORT=http` serves streamable-HTTP at `/mcp` (`UBMCP_HOST`, `UBMCP_PORT`,
+  `UBMCP_TOKEN`) so a client on another machine can use the server running next to Bambu Studio. Requests need
+  `Authorization: Bearer <token>`; it refuses to listen on a non-loopback address without a token. stdio is still the
+  default. See "Run over HTTP" in the README.
 
 ## 0.3.0 (2026-10-28), first public release
 

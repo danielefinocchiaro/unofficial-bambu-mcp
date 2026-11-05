@@ -157,6 +157,80 @@ Then ask: *"What version of Bambu Studio do I have, and which printers can you u
 | `UBMCP_PRESET_BACKUPS` | `~/.config/unofficial-bambu-mcp/preset-backups` | Where a copy of a user preset goes before it is changed, renamed or deleted |
 | `BAMBU_PRINTER_SERIAL`, `BAMBU_PRINTER_ACCESS_CODE`, `BAMBU_PRINTER_IP` | from Bambu Studio | Printer for `printer_status`, if you do not want it read from Bambu Studio |
 
+## Run over HTTP
+
+**Why.** stdio means the MCP client starts the server itself, on the same machine. This server
+cannot be moved elsewhere: it drives the Bambu Studio CLI and reads Studio's saved printer
+details, so it has to run where Bambu Studio is installed, usually a desktop or laptop. An AI
+client running on a different machine (a home server, a container, a remote dev box) therefore
+had no way to use it. The HTTP transport lets that client connect over the network instead.
+stdio stays the default and is unchanged.
+
+**Run it** on the computer that has Bambu Studio:
+
+```bash
+UBMCP_TRANSPORT=http UBMCP_HOST=0.0.0.0 UBMCP_PORT=8765 UBMCP_TOKEN=<secret> unofficial-bambu-mcp
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `UBMCP_TRANSPORT` | `stdio` | `stdio`, or `http` for streamable-HTTP |
+| `UBMCP_HOST` | `127.0.0.1` | Address to listen on; `0.0.0.0` for every interface |
+| `UBMCP_PORT` | `8765` | Port to listen on |
+| `UBMCP_TOKEN` | none | Bearer token every request must carry. Required unless the host is loopback |
+
+The endpoint is `http://<host>:<port>/mcp`. Requests without `Authorization: Bearer <token>` get
+`401`. The server refuses to start (exit code 2) if it is asked to listen on a non-loopback
+address with no token, or if `UBMCP_TRANSPORT` is not `stdio` or `http`.
+
+**Connect a client.** For Claude Code:
+
+```bash
+claude mcp add --transport http bambu http://<host>:8765/mcp --header "Authorization: Bearer <secret>"
+```
+
+Or in an MCP config file:
+
+```json
+{ "mcpServers": { "bambu": {
+    "type": "http",
+    "url": "http://<host>:8765/mcp",
+    "headers": { "Authorization": "Bearer <secret>" } } } }
+```
+
+**Start it at login on macOS.** Use a LaunchAgent (not a LaunchDaemon: Bambu Studio and its
+saved printer details belong to your login session). Save as
+`~/Library/LaunchAgents/com.local.unofficial-bambu-mcp.plist`, fix the paths, then
+`launchctl load` it. launchd has a minimal `PATH`, so set it:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.local.unofficial-bambu-mcp</string>
+  <key>ProgramArguments</key><array>
+    <string>/opt/homebrew/bin/uvx</string><string>unofficial-bambu-mcp</string>
+  </array>
+  <key>EnvironmentVariables</key><dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>UBMCP_TRANSPORT</key><string>http</string>
+    <key>UBMCP_HOST</key><string>0.0.0.0</string>
+    <key>UBMCP_PORT</key><string>8765</string>
+    <key>UBMCP_TOKEN</key><string>CHANGE-ME</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+</dict></plist>
+```
+
+The computer must be awake and logged in for the server to answer.
+
+**Security.** The tools can start prints and delete files on the printer's SD card, so treat
+the token like a password. There is no TLS, and on a non-loopback address the server does not
+check the `Host` header, so the token is the only gate. Keep the port off the internet, and put
+the server behind a VPN such as Tailscale or a TLS reverse proxy (listen on `127.0.0.1` and let
+the proxy face the network).
+
 ## How it works
 
 Bambu Studio has no plugin or scripting API. This server works on the **project file** (.3mf, the format Bambu
